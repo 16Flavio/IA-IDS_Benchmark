@@ -15,15 +15,15 @@ Comparaison des performances des architectures de détection d'intrusions (IDS) 
 ## 🚀 Installation & Usage
 
 ```bash
-git clone [https://github.com/16Flavio/AI-IDS-Benchmark.git](https://github.com/16Flavio/AI-IDS-Benchmark.git)
+git clone https://github.com/16Flavio/AI-IDS-Benchmark.git
 pip install -r requirements.txt
 python main.py
 ```
 
 ## 📈 Résultats Préliminaires
 
-| Modèle | Précision | F1-Score | Remarque |
-| Check | --- | --- | --- |
-| Random Forest | 99.94% | 0.99 | Très rapide et robuste |
-| Hybride | 66.29% | 0.14 | Meilleure gestion des cas limites |
-| Deep Learning | 84.37% | 0.82 | Nécessite plus de données et une recherche de meilleurs hyperparametres |
+| Modèle | Précision | F1-Score | Remarque | \\
+| Check | --- | --- | --- | \\
+| Random Forest | 99.94% | 0.99 | Très rapide et robuste | \\
+| Hybride | 66.29% | 0.14 | Meilleure gestion des cas limites | \\
+| Deep Learning | 84.37% | 0.82 | Nécessite plus de données et une recherche de meilleurs hyperparametres | \\
