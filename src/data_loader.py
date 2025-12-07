@@ -12,13 +12,13 @@ class DataLoader:
     def load_data(self):
         print(f"Chargement des données locales pour : {self.dataset_name}...")
         if self.dataset_name == 'nsl_kdd':
-            X, y = self._load_nsl_kdd()
+            X, y, labels = self._load_nsl_kdd()
         elif self.dataset_name == 'cic_ids2017':
-            X, y = self._load_cic_ids()
+            X, y, labels = self._load_cic_ids()
         else:
             raise ValueError("Dataset inconnu. Choisir 'nsl_kdd' ou 'cic_ids2017'.")
         
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.4, random_state=42)
+        X_train, X_test, y_train, y_test, labels_train, labels_test = train_test_split(X, y, labels, test_size=0.4, random_state=42)
         
         scaler = StandardScaler()
         
@@ -26,7 +26,7 @@ class DataLoader:
         X_train = pd.DataFrame(scaler.fit_transform(X_train), columns=cols)
         X_test = pd.DataFrame(scaler.transform(X_test), columns=cols)
         
-        return X_train, X_test, y_train, y_test
+        return X_train, X_test, y_train, y_test, labels_test
 
     def _load_nsl_kdd(self):
         # Chemin vers le fichier local
@@ -50,6 +50,8 @@ class DataLoader:
         
         df = pd.read_csv(file_path, names=cols)
         
+        labels = df['attack']
+
         # Encodage binaire (Normal = 0, Attaque = 1)
         df['label'] = df['attack'].apply(lambda x: 0 if x == 'normal' else 1)
         
@@ -60,7 +62,7 @@ class DataLoader:
         X = df.drop(['attack', 'level', 'label'], axis=1)
         y = df['label']
         
-        return X, y
+        return X, y, labels
 
     def _load_cic_ids(self):
         # Chemin vers le fichier local (Wednesday = Attaques DoS / DDoS / Heartbleed)
@@ -80,6 +82,8 @@ class DataLoader:
         df.replace([np.inf, -np.inf], np.nan, inplace=True)
         df.dropna(inplace=True)
         
+        labels = df['Label']
+
         # Encodage Cible : BENIGN = 0, Le reste (DoS, etc.) = 1
         df['label'] = df['Label'].apply(lambda x: 0 if x == 'BENIGN' else 1)
         
@@ -95,4 +99,4 @@ class DataLoader:
         # X = X.iloc[:100000] 
         # y = y.iloc[:100000]
         
-        return X, y
+        return X, y, labels

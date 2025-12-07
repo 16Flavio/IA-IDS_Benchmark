@@ -5,9 +5,11 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 import argparse
 import pandas as pd
 import time
+import sys
 from src.data_loader import DataLoader
 from src.methods import RuleBasedDetector, MLDetector, DLDetector, HybridDetector
 from src.evaluation import Evaluator
+from src.simulation import TrafficSimulator
 from sklearn.metrics import accuracy_score, f1_score
 import datetime
 
@@ -68,7 +70,7 @@ python main.py --mode eval --dataset cic_ids2017
 if __name__ == "__main__":
     # Configuration des arguments ligne de commande
     parser = argparse.ArgumentParser(description="AI IDS Benchmark")
-    parser.add_argument('--mode', type=str, choices=['train', 'eval'], default='train', help="Mode: 'train' ou 'eval'")
+    parser.add_argument('--mode', type=str, choices=['train', 'eval', 'sim'], default='train', help="Mode: 'train', 'eval' ou sim")
     parser.add_argument('--dataset', type=str, default='cic_ids2017', help="Dataset: 'nsl_kdd' ou 'cic_ids2017'")
     args = parser.parse_args()
 
@@ -81,7 +83,7 @@ if __name__ == "__main__":
 
     # Chargement des données
     loader = DataLoader(args.dataset)
-    X_train, X_test, y_train, y_test = loader.load_data()
+    X_train, X_test, y_train, y_test, labels_test = loader.load_data()
 
     # Initialisation des modèles
     # Note: Pour le DL, on donne la shape uniquement si on va créer un nouveau modèle
@@ -173,3 +175,25 @@ if __name__ == "__main__":
         print(res_df.sort_values(by="F1-Score", ascending=False))
         update_readme(res_df)
         print(f"\nGraphiques sauvegardés dans le dossier /results")
+    
+    elif args.mode == 'sim':
+        print("\n[START] Simulateur Temps Réel...")
+        
+        if not os.path.exists(rf_path):
+            print(f"ERREUR: Modèles non trouvés.")
+            sys.exit(1)
+
+        rf_model.load_model(rf_path)
+        dl_loaded = DLDetector(input_shape=None) 
+        dl_loaded.load_model(dl_path)
+        hybrid_model = HybridDetector(dl_loaded)
+        
+        simulation_models = {
+            "RandomForest": rf_model,
+            "DeepLearn": dl_loaded,
+            "Hybride": hybrid_model
+        }
+        
+        # On passe 'labels_test' au simulateur pour afficher les noms d'attaques
+        sim = TrafficSimulator(simulation_models, X_test, y_test, labels_test)
+        sim.run(num_packets=30, delay=1.5)
