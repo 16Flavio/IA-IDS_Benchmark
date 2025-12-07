@@ -1,9 +1,11 @@
 import tensorflow as tf
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Dense, Dropout
-from tensorflow.keras.layers import Input
+from tensorflow.keras.models import Sequential, load_model
+from tensorflow.keras.layers import Dense, Dropout, Input, BatchNormalization
+from tensorflow.keras.callbacks import EarlyStopping
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.base import BaseEstimator
+import joblib
+import os
 
 # --- CONFIGURATION GPU ---
 try:
@@ -33,43 +35,74 @@ class RuleBasedDetector(BaseEstimator):
             else:
                 preds.append(0)
         return preds
+    
+    def save_model(self, path):
+        pass
+    
+    def load_model(self, path):
+        pass
 
 # MACHINE LEARNING (Random Forest)
 class MLDetector:
     def __init__(self):
-        self.model = RandomForestClassifier(n_estimators=100)
+        self.model = RandomForestClassifier(n_estimators=100, random_state=42)
         
     def train(self, X_train, y_train):
         self.model.fit(X_train, y_train)
         
     def predict(self, X):
         return self.model.predict(X)
+    
+    def predict_proba(self, X):
+        return self.model.predict_proba(X)
+
+    def save_model(self, path):
+        joblib.dump(self.model, path)
+        print(f"Modèle ML sauvegardé : {path}")
+
+    def load_model(self, path):
+        if os.path.exists(path):
+            self.model = joblib.load(path)
+            print(f"Modèle ML chargé depuis : {path}")
+        else:
+            print("Erreur : Fichier modèle introuvable.")
 
 # DEEP LEARNING (Simple MLP)
 class DLDetector:
-    def __init__(self, input_shape):
-        self.model = Sequential([
-            Input(shape=(input_shape,)),
+    def __init__(self, input_shape=None):
+        if input_shape:
+            self.model = Sequential([
+                Input(shape=(input_shape,)),
+                
+                # Couche 1 : Plus large + Normalisation
+                Dense(128, activation='relu'),
+                BatchNormalization(),
+                Dropout(0.3),
+                
+                # Couche 2
+                Dense(64, activation='relu'),
+                BatchNormalization(),
+                Dropout(0.3),
+                
+                # Couche 3
+                Dense(32, activation='relu'),
+                
+                # Sortie
+                Dense(1, activation='sigmoid')
+            ])
             
-            # Ensuite tes couches habituelles
-            Dense(64, activation='relu'),
-            Dropout(0.2),
-            Dense(32, activation='relu'),
-            Dense(1, activation='sigmoid')
-        ])
-        
-        self.model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
-        
+            self.model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+        else:
+            self.model = None
+
     def train(self, X_train, y_train):
-        # Conversion explicite en tenseurs TF (aide parfois à forcer l'usage GPU)
-        # Mais Keras le fait souvent tout seul.
+        early_stop = EarlyStopping(monitor='loss', patience=10, restore_best_weights=True)
         
         self.model.fit(
             X_train, y_train, 
-            epochs=500,          # On peut augmenter les epochs car le GPU est rapide
-            batch_size=1024,    # IMPORTANT : Avec un GPU, on augmente le Batch Size !
-                                # 32 est trop petit, le GPU s'ennuie. 
-                                # 1024 ou 2048 est mieux pour paralléliser.
+            epochs=500, 
+            batch_size=1024,
+            callbacks=[early_stop],
             verbose=1
         )
         
@@ -79,31 +112,51 @@ class DLDetector:
     def predict_proba(self, X):
         return self.model.predict(X, batch_size=1024)
     
+    def save_model(self, path):
+        self.model.save(path) # Sauvegarde au format .keras ou .h5
+        print(f"Modèle DL sauvegardé : {path}")
+
+    def load_model(self, path):
+        if os.path.exists(path):
+            self.model = load_model(path)
+            print(f"Modèle DL chargé depuis : {path}")
+        else:
+            print(f"Erreur : Fichier modèle introuvable {path}")
+
 # HYBRIDE (DL + LOGIQUE DE SÉCURITÉ)
 class HybridDetector:
     def __init__(self, dl_model):
         self.dl_model = dl_model
         
     def predict(self, X):
-        # Prédiction brute du Deep Learning
         probabilities = self.dl_model.predict_proba(X)
         final_preds = []
         
+        is_cic = 'Destination Port' in X.columns
+        
         for i, prob in enumerate(probabilities):
             p = prob[0]
-            # Logique Hybride :
-            # Si l'IA est sûre (> 80% ou < 20%), on lui fait confiance.
-            if p > 0.8:
+            
+            # Zone de Confiance IA
+            if p > 0.75: # J'ai baissé un peu le seuil pour faire confiance plus vite
                 final_preds.append(1)
-            elif p < 0.2:
+            elif p < 0.25:
                 final_preds.append(0)
+            
+            # Zone d'Incertitude (IA perdue) -> RÈGLES EXPERTES
             else:
-                # ZONE D'INCERTITUDE (20-80%) : On applique une règle logique stricte ("Fail-safe")
-                # Ex: Si incertain mais trafic vers un port sensible (ex: 22 SSH), on bloque par précaution.
                 row = X.iloc[i]
-                if row.get('dst_host_count', 0) > 50: # Règle de sécurité
-                    final_preds.append(1) # On force l'attaque (Paranoïaque)
-                else:
-                    final_preds.append(0) # On laisse passer
+                
+                if is_cic:
+                    if row['Flow Duration'] > 0.5 or row['Total Fwd Packets'] > 1.0:
+                        final_preds.append(1) # Probable DoS
+                    else:
+                        final_preds.append(0)
+                        
+                else: # NSL-KDD
+                    if row.get('dst_host_count', 0) > 0.5 or row.get('src_bytes', 0) > 1.0:
+                        final_preds.append(1)
+                    else:
+                        final_preds.append(0)
                     
         return final_preds

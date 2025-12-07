@@ -2,23 +2,31 @@ import pandas as pd
 import numpy as np
 import os
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelEncoder
+from sklearn.preprocessing import LabelEncoder, StandardScaler
 
 class DataLoader:
     def __init__(self, dataset_name='nsl_kdd'):
         self.dataset_name = dataset_name
-        # On récupère le chemin absolu du dossier racine du projet
-        # (On remonte de deux niveaux depuis ce fichier data_loader.py)
         self.base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         
     def load_data(self):
         print(f"Chargement des données locales pour : {self.dataset_name}...")
         if self.dataset_name == 'nsl_kdd':
-            return self._load_nsl_kdd()
+            X, y = self._load_nsl_kdd()
         elif self.dataset_name == 'cic_ids2017':
-            return self._load_cic_ids()
+            X, y = self._load_cic_ids()
         else:
             raise ValueError("Dataset inconnu. Choisir 'nsl_kdd' ou 'cic_ids2017'.")
+        
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.4, random_state=42)
+        
+        scaler = StandardScaler()
+        
+        cols = X.columns
+        X_train = pd.DataFrame(scaler.fit_transform(X_train), columns=cols)
+        X_test = pd.DataFrame(scaler.transform(X_test), columns=cols)
+        
+        return X_train, X_test, y_train, y_test
 
     def _load_nsl_kdd(self):
         # Chemin vers le fichier local
@@ -52,7 +60,7 @@ class DataLoader:
         X = df.drop(['attack', 'level', 'label'], axis=1)
         y = df['label']
         
-        return train_test_split(X, y, test_size=0.3, random_state=42)
+        return X, y
 
     def _load_cic_ids(self):
         # Chemin vers le fichier local (Wednesday = Attaques DoS / DDoS / Heartbleed)
@@ -87,4 +95,4 @@ class DataLoader:
         # X = X.iloc[:100000] 
         # y = y.iloc[:100000]
         
-        return train_test_split(X, y, test_size=0.3, random_state=42)
+        return X, y
