@@ -66,7 +66,7 @@ class DataLoader:
 
     def _load_cic_ids(self):
         # Chemin vers le fichier local (Wednesday = Attaques DoS / DDoS / Heartbleed)
-        file_path = os.path.join(self.base_dir, 'data', 'cic_ids2017', 'Wednesday-workingHours.pcap_ISCX.csv')
+        file_path = os.path.join(self.base_dir, 'data', 'cic_ids2017', 'Tuesday-WorkingHours.pcap_ISCX.csv')
         
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"Fichier introuvable : {file_path}. Vérifie le dossier data/cic_ids2017/")

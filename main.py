@@ -196,4 +196,4 @@ if __name__ == "__main__":
         
         # On passe 'labels_test' au simulateur pour afficher les noms d'attaques
         sim = TrafficSimulator(simulation_models, X_test, y_test, labels_test)
-        sim.run(num_packets=30, delay=1.5)
+        sim.run(num_packets=100, delay=0.3)
