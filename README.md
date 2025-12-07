@@ -22,8 +22,12 @@ python main.py
 
 ## 📈 Résultats Préliminaires
 
-| Modèle | Précision | F1-Score | Remarque | \\
-| Check | --- | --- | --- | \\
-| Random Forest | 99.94% | 0.99 | Très rapide et robuste | \\
-| Hybride | 66.29% | 0.14 | Meilleure gestion des cas limites | \\
-| Deep Learning | 84.37% | 0.82 | Nécessite plus de données et une recherche de meilleurs hyperparametres | \\
+| Modèle | Précision | F1-Score | Remarque | 
+
+| Check | --- | --- | --- | 
+
+| Random Forest | 99.94% | 0.99 | Très rapide et robuste | 
+
+| Hybride | 66.29% | 0.14 | Meilleure gestion des cas limites | 
+
+| Deep Learning | 84.37% | 0.82 | Nécessite plus de données et une recherche de meilleurs hyperparametres | 
