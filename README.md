@@ -24,13 +24,13 @@ python main.py --mode train --dataset cic_ids2017
 python main.py --mode eval --dataset cic_ids2017
 ```
 
-## 📈 Résultats (Dernière mise à jour : 07/12/2025 à 13:07)
+## 📈 Résultats (Dernière mise à jour : 09/12/2025 à 11:03)
 | Modèle | Précision | F1-Score | Temps (s) |
 | :--- | :--- | :--- | :--- |
-| **Random Forest** | 99.95% | 0.9993 | 1.4364 |
-| **Deep Learning** | 99.71% | 0.9960 | 1.2148 |
-| **Hybride** | 99.71% | 0.9961 | 1.0260 |
-| **Traditionnel** | 63.64% | 0.0000 | 5.4088 |
+| **Random Forest** | 99.89% | 0.9973 | 5.4984 |
+| **Deep Learning** | 99.47% | 0.9865 | 1.8857 |
+| **Hybride** | 99.26% | 0.9809 | 2.7802 |
+| **Traditionnel** | 80.32% | 0.0000 | 13.3568 |
 
 
 ## 🔍 Analyse

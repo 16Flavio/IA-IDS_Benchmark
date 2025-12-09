@@ -160,3 +160,6 @@ class HybridDetector:
                         final_preds.append(0)
                     
         return final_preds
+    
+    def predict_proba(self, X):
+        return self.dl_model.predict(X)
