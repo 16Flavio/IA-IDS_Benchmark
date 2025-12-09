@@ -13,59 +13,87 @@ from src.simulation import TrafficSimulator
 from sklearn.metrics import accuracy_score, f1_score
 import datetime
 
-def update_readme(results_df):
+def update_readme(results_df, dataset_name):
     """
-    Met à jour le fichier README.md à la racine du projet avec les nouveaux résultats.
-    Cela permet d'avoir une documentation toujours à jour sur GitHub.
+    Met à jour le fichier README.md avec :
+    1. Les résultats (Tableau)
+    2. Les images (Matrices/ROC)
+    3. Les liens de téléchargement (Datasets/Modèles)
     """
-    # Construction du tableau Markdown
+    # 1. Tableau des scores
     md_table = "| Modèle | Précision | F1-Score | Temps (s) |\n"
     md_table += "| :--- | :--- | :--- | :--- |\n"
     
     for _, row in results_df.iterrows():
         t = row['Temps (s)']
-        # Formatage propre du temps (évite d'afficher "0.123456789")
         temps_str = f"{t:.4f}" if isinstance(t, float) else str(t)
         md_table += f"| **{row['Modèle']}** | {row['Précision']:.2%} | {row['F1-Score']:.4f} | {temps_str} |\n"
 
-    # Le contenu statique du README
+    date_now = datetime.datetime.now().strftime("%d/%m/%Y à %H:%M")
+    
+    # 2. Liens vers les datasets (Statiques)
+    link_nsl = "https://www.kaggle.com/datasets/hassan06/nslkdd"
+    link_cic = "https://www.kaggle.com/datasets/chethuhn/network-intrusion-dataset"
+    
+    # 3. Contenu complet du README
     readme_content = f"""# 🛡️ IDS-Benchmark: Comparatif ML/DL pour la Cybersécurité
 
 Comparaison des performances des architectures de détection d'intrusions (IDS) sur des datasets historiques et modernes.
 
-## 📊 Datasets Étudiés
-* **NSL-KDD** : Dataset académique de référence.
-* **CIC-IDS2017** : Dataset moderne incluant des attaques DDoS, Brute Force et Botnet.
+## 📊 Données & Téléchargements
+Les datasets étant volumineux, ils ne sont pas inclus dans le dépôt git.
+* **Dataset Actuel du Benchmark** : `{dataset_name.upper()}`
 
-## 🧠 Méthodes Comparées
-1.  **Approche Traditionnelle** : Détection basée sur règles (Rule-based).
-2.  **Machine Learning** : Random Forest (Supervisé).
-3.  **Deep Learning** : Multi-Layer Perceptron (MLP) avec BatchNormalization.
-4.  **Approche Hybride** : Deep Learning assisté par logique experte (Neuro-Symbolique).
+### 📥 Comment obtenir les données ?
+1.  Créez un dossier `data/` à la racine du projet.
+2.  Téléchargez les fichiers CSV depuis les sources officielles :
+    * **NSL-KDD** : [Télécharger ici (UNB)]({link_nsl})
+    * **CIC-IDS2017** : [Télécharger ici (UNB)]({link_cic})
+3.  Placez les fichiers (ex: `KDDTrain+.txt` ou `Wednesday-workingHours.pcap_ISCX.csv`) dans les sous-dossiers correspondants (`data/nsl_kdd/` ou `data/cic_ids2017/`).
+
+### 🧠 Modèles Pré-entraînés
+Les modèles entraînés (`.joblib` et `.keras`) sont disponibles dans la section **[Releases](../../releases)** de ce dépôt GitHub pour éviter de tout ré-entraîner.
 
 ## 🚀 Installation & Usage
 ```bash
-git clone https://github.com/16Flavio/AI-IDS-Benchmark.git
+git clone [https://github.com/16Flavio/AI-IDS-Benchmark.git](https://github.com/16Flavio/AI-IDS-Benchmark.git)
 pip install -r requirements.txt
 
-# 1. Entraîner les modèles (Sauvegarde dans /models)
-python main.py --mode train --dataset cic_ids2017
+# A. Entraîner les modèles (Si vous avez téléchargé les données)
+python main.py --mode train --dataset {dataset_name}
 
-# 2. Évaluer et générer les graphiques/README (Lecture depuis /models)
-python main.py --mode eval --dataset cic_ids2017
+# B. Évaluer et générer ce rapport
+python main.py --mode eval --dataset {dataset_name}
+
+# C. Simulation Temps Réel (Dashboard SOC)
+python main.py --mode sim --dataset {dataset_name}
 ```
 
-## 📈 Résultats (Dernière mise à jour : {datetime.datetime.now().strftime("%d/%m/%Y à %H:%M")})
+## 📈 Résultats de l'Évaluation ({date_now})
+
+### Performance Globale
 {md_table}
 
-## 🔍 Analyse
-* Consultez le dossier `/results` pour visualiser les **Matrices de Confusion** et les **Courbes ROC**.
-* Consultez `notebooks/01_Data_Exploration.ipynb` pour l'analyse exploratoire des données.
+### 🔍 Matrices de Confusion
+| Random Forest | Deep Learning |
+| :---: | :---: |
+| ![RF](results/Random_Forest_cm.png) | ![DL](results/Deep_Learning_cm.png) |
+
+| Hybride (IA + Règles) | Traditionnel |
+| :---: | :---: |
+| ![Hybrid](results/Hybride_cm.png) | ![Trad](results/Traditionnel_cm.png) |
+
+### 📉 Courbes ROC
+| Random Forest | Deep Learning |
+| :---: | :---: |
+| ![RF ROC](results/Random_Forest_roc.png) | ![DL ROC](results/Deep_Learning_roc.png) |
 """
-    # Écriture dans le fichier
-    with open("README.md", "w", encoding="utf-8") as f:
-        f.write(readme_content)
-    print("\n[AUTO] README.md mis à jour avec succès !")
+    try:
+        with open("README.md", "w", encoding="utf-8") as f:
+            f.write(readme_content)
+        print("\n[AUTO] README.md mis à jour avec les liens de téléchargement !")
+    except Exception as e:
+        print(f"\n[ATTENTION] Erreur écriture README : {e}")
 
 if __name__ == "__main__":
     # Configuration des arguments ligne de commande
@@ -173,7 +201,7 @@ if __name__ == "__main__":
         res_df = pd.DataFrame(results)
         print("\n--- RÉSULTATS FINAUX ---")
         print(res_df.sort_values(by="F1-Score", ascending=False))
-        update_readme(res_df)
+        update_readme(res_df, args.dataset)
         print(f"\nGraphiques sauvegardés dans le dossier /results")
     
     elif args.mode == 'sim':

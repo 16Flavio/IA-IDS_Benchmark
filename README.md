@@ -2,37 +2,56 @@
 
 Comparaison des performances des architectures de détection d'intrusions (IDS) sur des datasets historiques et modernes.
 
-## 📊 Datasets Étudiés
-* **NSL-KDD** : Dataset académique de référence.
-* **CIC-IDS2017** : Dataset moderne incluant des attaques DDoS, Brute Force et Botnet.
+## 📊 Données & Téléchargements
+Les datasets étant volumineux, ils ne sont pas inclus dans le dépôt git.
+* **Dataset Actuel du Benchmark** : `CIC_IDS2017`
 
-## 🧠 Méthodes Comparées
-1.  **Approche Traditionnelle** : Détection basée sur règles (Rule-based).
-2.  **Machine Learning** : Random Forest (Supervisé).
-3.  **Deep Learning** : Multi-Layer Perceptron (MLP) avec BatchNormalization.
-4.  **Approche Hybride** : Deep Learning assisté par logique experte (Neuro-Symbolique).
+### 📥 Comment obtenir les données ?
+1.  Créez un dossier `data/` à la racine du projet.
+2.  Téléchargez les fichiers CSV depuis les sources officielles :
+    * **NSL-KDD** : [Télécharger ici (UNB)](https://www.kaggle.com/datasets/hassan06/nslkdd)
+    * **CIC-IDS2017** : [Télécharger ici (UNB)](https://www.kaggle.com/datasets/chethuhn/network-intrusion-dataset)
+3.  Placez les fichiers (ex: `KDDTrain+.txt` ou `Wednesday-workingHours.pcap_ISCX.csv`) dans les sous-dossiers correspondants (`data/nsl_kdd/` ou `data/cic_ids2017/`).
+
+### 🧠 Modèles Pré-entraînés
+Les modèles entraînés (`.joblib` et `.keras`) sont disponibles dans la section **[Releases](../../releases)** de ce dépôt GitHub pour éviter de tout ré-entraîner.
 
 ## 🚀 Installation & Usage
 ```bash
-git clone https://github.com/16Flavio/AI-IDS-Benchmark.git
+git clone [https://github.com/16Flavio/AI-IDS-Benchmark.git](https://github.com/16Flavio/AI-IDS-Benchmark.git)
 pip install -r requirements.txt
 
-# 1. Entraîner les modèles (Sauvegarde dans /models)
+# A. Entraîner les modèles (Si vous avez téléchargé les données)
 python main.py --mode train --dataset cic_ids2017
 
-# 2. Évaluer et générer les graphiques/README (Lecture depuis /models)
+# B. Évaluer et générer ce rapport
 python main.py --mode eval --dataset cic_ids2017
+
+# C. Simulation Temps Réel (Dashboard SOC)
+python main.py --mode sim --dataset cic_ids2017
 ```
 
-## 📈 Résultats (Dernière mise à jour : 09/12/2025 à 11:03)
+## 📈 Résultats de l'Évaluation (09/12/2025 à 13:26)
+
+### Performance Globale
 | Modèle | Précision | F1-Score | Temps (s) |
 | :--- | :--- | :--- | :--- |
-| **Random Forest** | 99.89% | 0.9973 | 5.4984 |
-| **Deep Learning** | 99.47% | 0.9865 | 1.8857 |
-| **Hybride** | 99.26% | 0.9809 | 2.7802 |
-| **Traditionnel** | 80.32% | 0.0000 | 13.3568 |
+| **Random Forest** | 99.89% | 0.9973 | 5.3919 |
+| **Deep Learning** | 99.47% | 0.9865 | 1.9087 |
+| **Hybride** | 99.26% | 0.9809 | 2.8012 |
+| **Traditionnel** | 80.32% | 0.0000 | 12.9253 |
 
 
-## 🔍 Analyse
-* Consultez le dossier `/results` pour visualiser les **Matrices de Confusion** et les **Courbes ROC**.
-* Consultez `notebooks/01_Data_Exploration.ipynb` pour l'analyse exploratoire des données.
+### 🔍 Matrices de Confusion
+| Random Forest | Deep Learning |
+| :---: | :---: |
+| ![RF](results/Random_Forest_cm.png) | ![DL](results/Deep_Learning_cm.png) |
+
+| Hybride (IA + Règles) | Traditionnel |
+| :---: | :---: |
+| ![Hybrid](results/Hybride_cm.png) | ![Trad](results/Traditionnel_cm.png) |
+
+### 📉 Courbes ROC
+| Random Forest | Deep Learning |
+| :---: | :---: |
+| ![RF ROC](results/Random_Forest_roc.png) | ![DL ROC](results/Deep_Learning_roc.png) |
