@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import contextlib
 import re
+from datetime import datetime
 
 # --- COULEURS---
 RED = '\033[91m'
@@ -18,6 +19,18 @@ WHITE = '\033[97m'
 RESET = '\033[0m'
 BOLD = '\033[1m'
 BG_RED = '\033[41m'
+
+class Colors:
+    HEADER = '\033[95m'
+    OKBLUE = '\033[94m'
+    OKCYAN = '\033[96m'
+    OKGREEN = '\033[92m'
+    WARNING = '\033[93m'
+    YELLOW = '\033[93m'
+    FAIL = '\033[91m'
+    ENDC = '\033[0m'
+    BOLD = '\033[1m'
+    UNDERLINE = '\033[4m'
 
 # --- UTILITAIRES D'AFFICHAGE ---
 def visible_len(s):
@@ -45,11 +58,14 @@ def suppress_output():
             sys.stderr = old_stderr
 
 class TrafficSimulator:
-    def __init__(self, models, X_test, y_test, labels_test):
-        self.models = models
-        self.X_test = X_test
-        self.y_test = y_test
-        self.labels_test = labels_test
+    def __init__(self, models_dict, X_val, y_val, labels_val):
+        self.models = models_dict # Dict de modèles {"RandomForest": model, ...}
+        self.X_val = X_val
+        self.y_val = y_val.reset_index(drop=True)
+        self.labels_val = labels_val.reset_index(drop=True)
+        
+        # ACTIVE DEFENSE: Cache des attaquants pour les ré-utiliser (Simulation d'attaque persistante)
+        self.known_attackers = [] 
         
         # Dictionnaire pour traduire les features techniques en langage humain
         self.feature_map = {
@@ -65,16 +81,21 @@ class TrafficSimulator:
             'count': 'Fréq. Connexion'
         }
 
-    def _generate_fake_metadata(self, attack_name):
-        src_ip = f"192.168.{random.randint(10, 50)}.{random.randint(2, 254)}"
-        if isinstance(attack_name, str):
-            if "SSH" in attack_name: port = 22
-            elif "HTTP" in attack_name or "DoS" in attack_name: port = 80
-            elif "FTP" in attack_name: port = 21
-            else: port = random.randint(1024, 65535)
+    def _generate_fake_metadata(self, is_attack):
+        """Génère des fausses métadonnées (IP, Port) pour le réalisme."""
+        port = np.random.randint(1024, 65535)
+        
+        if is_attack:
+            # ACTIVE DEFENSE: 50% de chance de réutiliser une IP d'attaquant connu
+            if self.known_attackers and np.random.rand() > 0.5:
+                ip = np.random.choice(self.known_attackers)
+            else:
+                ip = f"192.168.1.{np.random.randint(100, 200)}"
+                self.known_attackers.append(ip) # On le mémorise
         else:
-            port = random.randint(1024, 65535)
-        return src_ip, port
+            ip = f"10.0.0.{np.random.randint(2, 254)}"
+            
+        return ip, port
 
     def _get_model_proba(self, model, row):
         if hasattr(model, 'predict_proba'):
@@ -86,36 +107,55 @@ class TrafficSimulator:
 
     def _get_true_explanation(self, model, row, model_name):
         """Moteur XAI : Analyse causale détaillée."""
+        if "AutoEncoder" in model_name:
+             # Cas Spécial Zero-Day : On ne regarde pas la proba mais la MSE
+             try:
+                 mse = model.predict_proba(row)[0] # Retourne la MSE
+                 thresh = getattr(model, "threshold", 0.05)
+                 if mse > thresh:
+                     return f"Anomalie Zero-Day (MSE={mse:.3f})"
+                 else:
+                     return ""
+             except:
+                 return "Erreur XAI AE"
+
+        # Cas Classique (RF, DL, Hybride)
         with suppress_output():
             base_pred = self._get_model_proba(model, row)
         
         if base_pred is None: return ""
 
+        # Gestion des différentes formes de sortie (Proba 1D, 2D, Scalar)
         if isinstance(base_pred, list): base_prob = base_pred[0]
-        elif base_pred.shape[1] == 2: base_prob = base_pred[0][1]
-        else: base_prob = base_pred[0][0]
+        elif hasattr(base_pred, "shape") and base_pred.shape == (1, 2): base_prob = base_pred[0][1]
+        elif hasattr(base_pred, "shape") and base_pred.shape == (1, 1): base_prob = base_pred[0][0]
+        elif hasattr(base_pred, "item"): base_prob = base_pred.item()
+        else: base_prob = float(base_pred)
 
-        if base_prob < 0.5: return "" # Pas d'explication si Safe
+        if base_prob < 0.5: return "" # Pas d'explication si considéré Safe
 
         # 1. Analyse Hybride (Logique Règle)
         if "Hybride" in model_name:
             is_cic = 'Destination Port' in row.columns
-            # Si dans la zone d'incertitude (entre 25% et 75%), c'est probablement une règle
-            if 0.25 <= base_prob <= 0.75:
+            # Si dans la zone d'incertitude (entre 25% et 75%), c'est probablement une règle qui a tranché
+            if 0.20 <= base_prob <= 0.80:
                 if is_cic:
-                    if row['Flow Duration'].item() > 0.5: return "Règle: Durée > Seuil"
-                    if row['Total Fwd Packets'].item() > 1.0: return "Règle: Flood Paquets"
-                else:
-                    if row.get('dst_host_count', 0).item() > 0.5: return "Règle: Fréq. Hôte"
-                return "Règle: Sécurité"
+                    if 'Flow Duration' in row and row['Flow Duration'].item() > 0.5: return "Règle: Durée Anormale"
+                    if 'Total Fwd Packets' in row and row['Total Fwd Packets'].item() > 0.5: return "Règle: Volume Suspect"
+                return "Règle: Statistique"
 
         # 2. Analyse Perturbation (Deep Learning & RF)
-        significant_features = row.columns[row.abs().gt(0.5).any()].tolist()
+        # On cherche la feature qui fait le plus baisser la probabilité d'attaque si on la met à 0
+        significant_features = row.columns[row.abs().gt(0.1).any()].tolist() # Optimisation: on ne teste que les features > 0.1
         impacts = {}
         
+        # Limite pour performance
+        if len(significant_features) > 10: 
+            significant_features = significant_features[:10]
+
         for feature in significant_features:
             perturbed_row = row.copy()
-            perturbed_row[feature] = 0.0 # On neutralise la feature
+            perturbed_row[feature] = 0.0 # On neutralise la feature (valeur moyenne car centré réduit)
             
             with suppress_output():
                 new_pred = self._get_model_proba(model, perturbed_row)
@@ -123,159 +163,140 @@ class TrafficSimulator:
             if new_pred is None: continue
 
             if isinstance(new_pred, list): new_prob = new_pred[0]
-            elif new_pred.shape[1] == 2: new_prob = new_pred[0][1]
-            else: new_prob = new_pred[0][0]
+            elif hasattr(new_pred, "shape") and new_pred.shape == (1, 2): new_prob = new_pred[0][1]
+            elif hasattr(new_pred, "shape") and new_pred.shape == (1, 1): new_prob = new_pred[0][0]
+            elif hasattr(new_pred, "item"): new_prob = new_pred.item()
+            else: new_prob = float(new_pred)
             
-            impacts[feature] = base_prob - new_prob
+            impacts[feature] = base_prob - new_prob # Chute de confiance
 
         if not impacts: return "Motif Global"
             
         best_feature = max(impacts, key=impacts.get)
         confidence_drop = impacts[best_feature]
         
-        if confidence_drop < 0.05: return "Combinaison Complexe"
+        if confidence_drop < 0.01: return "Pattern Complexe"
         
         # --- ENRICHISSEMENT DE L'EXPLICATION ---
-        # On regarde la valeur brute (Z-Score) pour dire si c'est "Trop haut" ou "Anormal"
-        val = row[best_feature].item()
-        human_name = self.feature_map.get(best_feature, best_feature[:10])
-        
-        if val > 0: qualifier = "Trop Haut"
-        else: qualifier = "Anormal"
-        
-        return f"{human_name} ({qualifier})"
+        human_name = self.feature_map.get(best_feature, best_feature[:15])
+        return f"{human_name}"
 
-    def run(self, num_packets=20, delay=1.0):
-        # En-tête élargi
-        print("\n" * 2)
-        print(f"{CYAN}" + "="*185 + f"{RESET}")
-        print(f"{BOLD}{WHITE}   LIVE THREAT MONITORING - XAI ENABLED (Alignement & Détails)   {RESET}")
-        print(f"{CYAN}" + "="*185 + f"{RESET}")
+    def run(self, num_packets=50, delay=0.5):
+        print(f"\n{Colors.HEADER}--- DÉMARRAGE DU TRAFFIC SIMULATOR (DASHBOARD SOC) ---{Colors.ENDC}")
+        print(f"{Colors.BOLD}Simulation de {num_packets} paquets en temps réel...{Colors.ENDC}\n")
+        # Header élargi pour XAI
+        print(f"{'TIMESTAMP':<10} | {'SOURCE IP':<15} | {'TYPE':<12} | {'DÉTECTION (MODELE)':<40} | {'ACTION':<10} | {'RAISON (XAI)':<20}")
+        print("-" * 125)
+
+        stats = {name: {"Blocked": 0, "Allowed": 0, "Firewall": 0} for name in self.models.keys()}
         
-        # Largeurs de colonnes fixes (Visibles)
-        w_time = 10
-        w_nat = 30
-        w_rf = 34
-        w_dl = 34
-        w_hyb = 34
+        if len(self.X_val) == 0:
+            print("Erreur: Dataset vide pour la simulation.")
+            return
 
-        header = (
-            pad_ansi(f"{BOLD}TIME", w_time) + "| " +
-            pad_ansi("NATURE (VÉRITÉ)", w_nat) + "| " +
-            pad_ansi("RANDOM FOREST", w_rf) + "| " +
-            pad_ansi("DEEP LEARNING", w_dl) + "| " +
-            pad_ansi("HYBRIDE", w_hyb) + RESET
-        )
-        print(header)
-        print(f"{CYAN}" + "-"*185 + f"{RESET}")
+        indices = np.random.choice(len(self.X_val), min(num_packets, len(self.X_val)), replace=False)
 
-        indices = list(range(len(self.X_test)))
-        random.shuffle(indices)
-        selected_indices = indices[:num_packets]
-        
-        # Stats pour le rapport final
-        stats = {name: {"correct": 0, "total": 0, "latencies": [], "fn": 0, "fp": 0} for name in self.models.keys()}
-
-        for i in selected_indices:
-            row = self.X_test.iloc[[i]]
-            is_attack = self.y_test.iloc[i] == 1
-            real_label_name = self.labels_test.iloc[i]
+        for i in indices:
+            row = self.X_val.iloc[[i]] # DataFrame
+            actual_label = self.y_val[i]
+            attack_name = self.labels_val[i] if actual_label == 1 else "Normal"
+            is_attack = (actual_label == 1)
             
-            timestamp = time.strftime("%H:%M:%S")
-            src_ip, port = self._generate_fake_metadata(real_label_name)
-            
-            # VÉRITÉ TERRAIN
-            if is_attack:
-                label_txt = f"ATTAQUE ({str(real_label_name)[:15]})"
-                packet_info = f"{RED}{label_txt}{RESET}"
-            else:
-                packet_info = f"{GREEN}SAFE TRAFFIC{RESET}"
+            src_ip, src_port = self._generate_fake_metadata(is_attack)
+            timestamp = datetime.now().strftime("%H:%M:%S")
 
-            line_start = pad_ansi(f"{timestamp}", w_time) + "| " + pad_ansi(packet_info, w_nat) + "| "
-            print(line_start, end="", flush=True)
-
-            results_str = []
+            # --- ACTIVE DEFENSE LOGIC ---
+            firewall_model = self.models.get("Traditionnel (Règles)") or self.models.get("Hybride")
+            is_firewalled = False
             
+            if firewall_model:
+                if hasattr(firewall_model, "rb_model") and firewall_model.rb_model: # Cas Hybride
+                     if firewall_model.rb_model.is_blocked(src_ip):
+                         is_firewalled = True
+                elif hasattr(firewall_model, "is_blocked"): # Cas Traditionnel
+                     if firewall_model.is_blocked(src_ip):
+                         is_firewalled = True
+
+            
+            # Affichage pour chaque modèle
+            results_display = []
+            final_action = f"{Colors.OKGREEN}ALLOW{Colors.ENDC}"
+            explanation = "" # Explication globale
+
             for model_name, model in self.models.items():
-                t0 = time.perf_counter()
-                with suppress_output():
-                    pred = model.predict(row)
-                lat = (time.perf_counter() - t0) * 1000 
-                
-                # Conversion & Stats
-                if isinstance(pred, list): pred = pred[0]
-                elif isinstance(pred, np.ndarray): pred = pred.item()
-                pred = int(pred)
-                truth = int(self.y_test.iloc[i])
-                
-                stats[model_name]["latencies"].append(lat)
-                stats[model_name]["total"] += 1
-                if pred == truth: stats[model_name]["correct"] += 1
-                if truth == 1 and pred == 0: stats[model_name]["fn"] += 1
-                elif truth == 0 and pred == 1: stats[model_name]["fp"] += 1
+                if is_firewalled:
+                    # BLOCKED BY FIREWALL
+                    pred = 1 
+                    if model_name in ["Traditionnel (Règles)", "Hybride"]:
+                        stats[model_name]["Firewall"] += 1
+                        stats[model_name]["Blocked"] += 1
+                        final_action = f"{Colors.FAIL}BLOCK [FW]{Colors.ENDC}"
+                        explanation = f"{Colors.WARNING}IP Blacklistée{Colors.ENDC}"
+                    else:
+                        # Les autres modèles n'ont pas forcément accès au FW
+                        # Pour l'affichage, on montre qu'ils sont 'out' ou on simule leur décision
+                        # On va dire qu'ils sont bypassés par le FW
+                        stats[model_name]["Firewall"] += 1
+                        stats[model_name]["Blocked"] += 1
+                        
+                else:
+                    # BLOCKED BY AI
+                    try:
+                        pred = model.predict(row)
+                        # Conversion robuste scalaire
+                        if hasattr(pred, "values"): pred = pred.values
+                        if hasattr(pred, "flatten"): pred = pred.flatten()[0]
+                        elif isinstance(pred, list): pred = pred[0]
+                    except:
+                        pred = 0
 
-                # Construction Cellule
-                reason_str = ""
-                if pred == 1: # BLOCK
-                    action = f"{BG_RED}{WHITE} BLOCK {RESET}"
-                    reason = self._get_true_explanation(model, row, model_name)
-                    reason_str = f"{YELLOW}[{reason}]{RESET}"
-                else:         # ALLOW
-                    action = f"{GREEN} ALLOW {RESET}"
-                
-                status_icon = "✅" if pred == truth else "❌"
-                
-                # Assemblage avec alignement strict
-                # Contenu : Action + Raison + Icone
-                content = f"{action} {reason_str}"
-                
-                # On pad le contenu principal à (largeur - 3 chars pour l'icone)
-                # w_model - 2 (espaces) - 2 (icone) = w_model - 4
-                padded_content = pad_ansi(content, w_rf - 4)
-                full_cell = f"{padded_content} {status_icon}"
-                
-                results_str.append(full_cell)
+                    if pred == 1:
+                        action_str = f"{Colors.FAIL}BLOCK [AI]{Colors.ENDC}"
+                        stats[model_name]["Blocked"] += 1
+                        final_action = action_str
+                        
+                        # On calcule l'explication XAI pour ce modèle
+                        # On prend la première explication pertinente trouvée pour l'affichage global
+                        if not explanation:
+                            reason = self._get_true_explanation(model, row, model_name)
+                            if reason:
+                                explanation = reason
 
-            print(" | ".join(results_str))
-            time.sleep(0.1) # Un peu plus rapide car le calcul XAI ajoute déjà de la latence
+                        # ACTIVE DEFENSE UPDATE
+                        if firewall_model and is_attack:
+                            if hasattr(firewall_model, "rb_model") and firewall_model.rb_model:
+                                firewall_model.rb_model.update_blocklist(src_ip)
+                            elif hasattr(firewall_model, "update_blocklist"):
+                                firewall_model.update_blocklist(src_ip)
 
-        # --- RAPPORT DE FIN ---
-        print(f"{CYAN}" + "="*185 + f"{RESET}")
-        print(f"\n{BOLD}{WHITE}RAPPORT DE PERFORMANCE FINAL (Sur {len(selected_indices)} paquets){RESET}")
-        
-        # En-têtes du rapport
-        r_mod = 20
-        r_acc = 12
-        r_lat = 15
-        r_dang = 25
-        r_fa = 15
-        
-        rep_header = (
-            pad_ansi("MODÈLE", r_mod) + "| " +
-            pad_ansi("PRÉCISION", r_acc) + "| " +
-            pad_ansi("LATENCE MOY.", r_lat) + "| " +
-            pad_ansi("ATTAQUES RATÉES (Danger)", r_dang) + "| " +
-            pad_ansi("FAUSSES ALERTES", r_fa)
-        )
-        print(rep_header)
-        print("-" * 100)
+                    else:
+                        stats[model_name]["Allowed"] += 1
 
-        for model, data in stats.items():
-            if data["total"] > 0:
-                acc = (data["correct"] / data["total"]) * 100
-                avg_lat = sum(data["latencies"]) / len(data["latencies"])
+                # Coloration du nom du modèle
+                is_correct = (int(pred) == int(actual_label))
+                if is_correct:
+                    res_str = f"{Colors.OKGREEN}{model_name}{Colors.ENDC}"
+                else:
+                    res_str = f"{Colors.FAIL}{model_name}{Colors.ENDC}"
                 
-                # Couleurs
-                c_acc = GREEN if acc > 95 else (YELLOW if acc > 80 else RED)
-                c_lat = GREEN if avg_lat < 1.0 else (YELLOW if avg_lat < 50.0 else RED)
-                c_dang = GREEN if data["fn"] == 0 else (RED + BOLD)
-                
-                row_str = (
-                    pad_ansi(f"{model}", r_mod) + "| " +
-                    pad_ansi(f"{c_acc}{acc:6.2f}%{RESET}", r_acc) + "| " +
-                    pad_ansi(f"{c_lat}{avg_lat:6.2f} ms{RESET}", r_lat) + "| " +
-                    pad_ansi(f"{c_dang}{str(data['fn']):^25}{RESET}", r_dang) + "| " +
-                    pad_ansi(f"{str(data['fp']):^15}", r_fa)
-                )
-                print(row_str)
+                results_display.append(res_str)
+
+            # Formatage de l'affichage ligne
+            type_color = Colors.FAIL if is_attack else Colors.OKGREEN
+            
+            # Formattage de l'explication
+            if explanation:
+                expl_str = f"{Colors.YELLOW}{explanation}{Colors.ENDC}"
+            else:
+                expl_str = "-"
+
+            print(f"{timestamp} | {src_ip:<15} | {type_color}{attack_name[:12]:<12}{Colors.ENDC} | {' | '.join(results_display):<60} | {final_action:<10} | {expl_str}")
+            
+            time.sleep(delay)
+
+        print("-" * 125)
+        print(f"{Colors.BOLD}Simulation Terminée.{Colors.ENDC}")
+        print("Résumé des Actions :")
+        for m, s in stats.items():
+            print(f" - {m:<20}: {s['Blocked']} Bloqués (dont {s['Firewall']} par Firewall), {s['Allowed']} Autorisés")
         print("\n")

@@ -10,10 +10,37 @@ class DataLoader:
         self.dataset_name = dataset_name
         # On remonte de deux niveaux depuis ce fichier pour trouver la racine
         self.base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        self.processed_dir = os.path.join(self.base_dir, 'data', 'processed', self.dataset_name)
+        if not os.path.exists(self.processed_dir):
+            os.makedirs(self.processed_dir)
         
     def load_data(self):
-        print(f"Chargement des données locales pour : {self.dataset_name}...")
+        print(f"Chargement des données pour : {self.dataset_name}...")
         
+        # Check if pre-processed data exists
+        split_files = ['X_train.joblib', 'X_test.joblib', 'X_val.joblib', 
+                       'y_train.joblib', 'y_test.joblib', 'y_val.joblib', 
+                       'labels_val.joblib', 'labels_test.joblib']
+        
+        all_exist = all(os.path.exists(os.path.join(self.processed_dir, f)) for f in split_files)
+        
+        if all_exist:
+            print("   -> Chargement des données pré-traitées sauvegardées...")
+            import joblib
+            X_train = joblib.load(os.path.join(self.processed_dir, 'X_train.joblib'))
+            X_test = joblib.load(os.path.join(self.processed_dir, 'X_test.joblib'))
+            X_val = joblib.load(os.path.join(self.processed_dir, 'X_val.joblib'))
+            y_train = joblib.load(os.path.join(self.processed_dir, 'y_train.joblib'))
+            y_test = joblib.load(os.path.join(self.processed_dir, 'y_test.joblib'))
+            y_val = joblib.load(os.path.join(self.processed_dir, 'y_val.joblib'))
+            labels_test = joblib.load(os.path.join(self.processed_dir, 'labels_test.joblib'))
+            labels_val = joblib.load(os.path.join(self.processed_dir, 'labels_val.joblib'))
+            
+            print(f"   -> Données chargées. Train: {X_train.shape}, Test: {X_test.shape}, Val: {X_val.shape}")
+            return X_train, X_test, X_val, y_train, y_test, y_val, labels_test, labels_val
+
+        # Sinon, on charge depuis les CSV bruts
+        print("   -> Création des splits (60% Train, 20% Test, 20% Val)...")
         if self.dataset_name == 'nsl_kdd':
             X, y, labels = self._load_nsl_kdd()
         elif self.dataset_name == 'cic_ids2017':
@@ -21,21 +48,37 @@ class DataLoader:
         else:
             raise ValueError("Dataset inconnu.")
 
-        # Split Train/Test
-        # On garde 70% pour l'entrainement, 30% pour le test
-        X_train, X_test, y_train, y_test, labels_train, labels_test = train_test_split(
-            X, y, labels, test_size=0.3, random_state=42, stratify=y
+        # 1. Split Train (60%) vs Temp (40%)
+        X_train, X_temp, y_train, y_temp, _, labels_temp = train_test_split(
+            X, y, labels, test_size=0.4, random_state=42, stratify=y
+        )
+        
+        # 2. Split Temp en Test (50% de temp -> 20% total) et Val (50% de temp -> 20% total)
+        X_test, X_val, y_test, y_val, labels_test, labels_val = train_test_split(
+            X_temp, y_temp, labels_temp, test_size=0.5, random_state=42, stratify=y_temp
         )
         
         print("Normalisation des données (StandardScaler)...")
         scaler = StandardScaler()
         cols = X.columns
-        # On fit uniquement sur le train pour éviter la fuite de données
+        # On fit uniquement sur le train
         X_train = pd.DataFrame(scaler.fit_transform(X_train), columns=cols)
         X_test = pd.DataFrame(scaler.transform(X_test), columns=cols)
+        X_val = pd.DataFrame(scaler.transform(X_val), columns=cols)
         
-        # On retourne aussi les labels textuels pour la simulation
-        return X_train, X_test, y_train, y_test, labels_test
+        # Sauvegarde pour les prochaines fois
+        import joblib
+        print("   -> Sauvegarde des splits pour la cohérence...")
+        joblib.dump(X_train, os.path.join(self.processed_dir, 'X_train.joblib'))
+        joblib.dump(X_test, os.path.join(self.processed_dir, 'X_test.joblib'))
+        joblib.dump(X_val, os.path.join(self.processed_dir, 'X_val.joblib'))
+        joblib.dump(y_train, os.path.join(self.processed_dir, 'y_train.joblib'))
+        joblib.dump(y_test, os.path.join(self.processed_dir, 'y_test.joblib'))
+        joblib.dump(y_val, os.path.join(self.processed_dir, 'y_val.joblib'))
+        joblib.dump(labels_test, os.path.join(self.processed_dir, 'labels_test.joblib'))
+        joblib.dump(labels_val, os.path.join(self.processed_dir, 'labels_val.joblib'))
+        
+        return X_train, X_test, X_val, y_train, y_test, y_val, labels_test, labels_val
 
     def _load_nsl_kdd(self):
         file_path = os.path.join(self.base_dir, 'data', 'nsl_kdd', 'KDDTrain+.txt')
