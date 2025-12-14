@@ -67,18 +67,19 @@ class TrafficSimulator:
         # ACTIVE DEFENSE: Cache des attaquants pour les ré-utiliser (Simulation d'attaque persistante)
         self.known_attackers = [] 
         
-        # Dictionnaire pour traduire les features techniques en langage humain
+        # Dictionnaire pour traduire les features techniques en langage humain et pédagogique
         self.feature_map = {
-            'Flow Duration': 'Durée Connexion',
-            'Total Fwd Packets': 'Volume Upload',
-            'Total Backward Packets': 'Volume Download',
-            'Total Length of Fwd Packets': 'Taille Upload',
-            'Fwd Packet Length Max': 'Paquet Max',
-            'Destination Port': 'Port Dest.',
-            'dst_host_count': 'Fréq. Hôte',
-            'src_bytes': 'Octets Source',
-            'dst_bytes': 'Octets Dest.',
-            'count': 'Fréq. Connexion'
+            'Flow Duration': 'Durée de Connexion Anormale (Possible Scan Lent)',
+            'Total Fwd Packets': 'Volume d\'Upload Suspect (Exfiltration ?)',
+            'Total Backward Packets': 'Volume de Download Suspect',
+            'Total Length of Fwd Packets': 'Taille Upload Inhabituelle',
+            'Fwd Packet Length Max': 'Paquet Trop Volumineux',
+            'Destination Port': 'Port Cible Suspect (Scan/Exploit)',
+            'dst_host_count': 'Trafic vers Hôte Saturé',
+            'src_bytes': 'Volume Source Anormal',
+            'dst_bytes': 'Volume Destination Anormal',
+            'count': 'Fréquence de Connexion Élevée (Brute Force ?)',
+            'srv_count': 'Services Multiples (Scan ?)',
         }
 
     def _generate_fake_metadata(self, is_attack):
@@ -113,10 +114,11 @@ class TrafficSimulator:
                  mse = model.predict_proba(row)[0] # Retourne la MSE
                  thresh = getattr(model, "threshold", 0.05)
                  if mse > thresh:
-                     return f"Anomalie Zero-Day (MSE={mse:.3f})"
+                     return f"Comportement Inconnu (Zero-Day)"
                  else:
                      return ""
-             except:
+             except Exception as e:
+                 print(f"DEBUG ERROR XAI: {e}")
                  return "Erreur XAI AE"
 
         # Cas Classique (RF, DL, Hybride)
@@ -140,9 +142,9 @@ class TrafficSimulator:
             # Si dans la zone d'incertitude (entre 25% et 75%), c'est probablement une règle qui a tranché
             if 0.20 <= base_prob <= 0.80:
                 if is_cic:
-                    if 'Flow Duration' in row and row['Flow Duration'].item() > 0.5: return "Règle: Durée Anormale"
-                    if 'Total Fwd Packets' in row and row['Total Fwd Packets'].item() > 0.5: return "Règle: Volume Suspect"
-                return "Règle: Statistique"
+                    if 'Flow Duration' in row and row['Flow Duration'].item() > 0.5: return "Règle: Durée Trop Longue"
+                    if 'Total Fwd Packets' in row and row['Total Fwd Packets'].item() > 0.5: return "Règle: Volume Excessif"
+                return "Règle: Seuil Statistique Dépassé"
 
         # 2. Analyse Perturbation (Deep Learning & RF)
         # On cherche la feature qui fait le plus baisser la probabilité d'attaque si on la met à 0
