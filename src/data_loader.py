@@ -122,8 +122,6 @@ class DataLoader:
         print(f"   -> Fichiers trouvés : {len(all_files)}")
         
         df_list = []
-        # RATIO D'ÉCHANTILLONNAGE : 0.2 = On prend 20% de chaque fichier
-        # Si vous avez 32Go de RAM, mettez 1.0. Si 16Go, mettez 0.2 ou 0.3.
         SAMPLE_RATIO = 1
         
         for filename in all_files:
