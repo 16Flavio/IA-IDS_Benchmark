@@ -146,30 +146,40 @@ if __name__ == "__main__":
         
         # 1. Règles Stastistiques (Training léger)
         print(" -> Règle Based (Statistiques)...")
+        start = time.time()
         rb_model.fit(X_train, y_train)
+        print(f"    (Temps entraînement: {time.time() - start:.2f}s)")
         rb_model.save_model(rb_path)
         
         # 2. Auto-Encoder (Zero-Day / Non-Supervisé)
         print(" -> Auto-Encoder (Zero-Day Detection)...")
+        start = time.time()
         ae_model.fit(X_train, y_train)
+        print(f"    (Temps entraînement: {time.time() - start:.2f}s)")
         ae_model.save_model(ae_path)
 
         # Random Forest
         print(" -> Random Forest...")
+        start = time.time()
         rf_model.train(X_train, y_train)
+        print(f"    (Temps entraînement: {time.time() - start:.2f}s)")
         rf_model.save_model(rf_path)
         
         # XGBoost
         if xgb_model:
             print(" -> XGBoost...")
             # On utilise le set de TEST (interne) pour le monitoring
+            start = time.time()
             xgb_model.train(X_train, y_train, X_val=X_test, y_val=y_test)
+            print(f"    (Temps entraînement: {time.time() - start:.2f}s)")
             xgb_model.save_model(xgb_path)
         
         # Deep Learning
         print(" -> Deep Learning...")
         # On utilise le set de TEST (interne) pour le monitoring/early stopping
+        start = time.time()
         dl_model.train(X_train, y_train, X_val=X_test, y_val=y_test)
+        print(f"    (Temps entraînement: {time.time() - start:.2f}s)")
         dl_model.save_model(dl_path)
         
         print("\nEntraînement terminé. Modèles sauvegardés dans /models")

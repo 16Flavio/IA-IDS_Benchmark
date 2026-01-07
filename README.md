@@ -31,17 +31,17 @@ python main.py --mode eval --dataset cic_ids2017
 python main.py --mode sim --dataset cic_ids2017
 ```
 
-## 📈 Résultats de l'Évaluation (14/12/2025 à 00:45)
+## 📈 Résultats de l'Évaluation (07/01/2026 à 20:01)
 
 ### Performance Globale
-| Modèle | Précision | F1-Score |
-| :--- | :--- | :--- |
-| **Random Forest** | 99.89% | 0.9972 |
-| **Deep Learning** | 98.43% | 0.9604 |
-| **Hybride** | 98.43% | 0.9605 |
-| **Traditionnel (Règles)** | 80.12% | 0.0004 |
-| **Auto-Encoder (Zero-Day)** | 77.87% | 0.5162 |
-| **XGBoost** | 99.92% | 0.9980 |
+| Modèle | Précision | F1-Score | Temps (s) |
+| :--- | :--- | :--- | :--- |
+| **Random Forest** | 99.89% | 0.9972 | 3.8106 |
+| **Deep Learning** | 98.49% | 0.9620 | 2.9381 |
+| **Hybride** | 98.49% | 0.9620 | 17.2677 |
+| **Traditionnel (Règles)** | 80.12% | 0.0004 | 14.6744 |
+| **Auto-Encoder (Zero-Day)** | 84.92% | 0.5344 | 25.6617 |
+| **XGBoost** | 99.92% | 0.9980 | 0.4572 |
 
 
 ### 🔍 Matrices de Confusion
