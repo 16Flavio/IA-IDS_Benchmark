@@ -154,7 +154,9 @@ if __name__ == "__main__":
         # 2. Auto-Encoder (Zero-Day / Non-Supervisé)
         print(" -> Auto-Encoder (Zero-Day Detection)...")
         start = time.time()
-        ae_model.fit(X_train, y_train)
+        # --- MODIFICATION: On passe le set de TEST (qui joue le rôle de validation ici) 
+        # pour optimiser le seuil de détection (Threshold) ---
+        ae_model.fit(X_train, y_train, X_val=X_test, y_val=y_test)
         print(f"    (Temps entraînement: {time.time() - start:.2f}s)")
         ae_model.save_model(ae_path)
 

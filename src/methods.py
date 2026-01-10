@@ -4,6 +4,7 @@ from tensorflow.keras.layers import Dense, Dropout, Input, BatchNormalization, A
 from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.base import BaseEstimator
+from sklearn.metrics import precision_recall_curve
 import joblib
 import os
 import numpy as np
@@ -282,7 +283,11 @@ class AnomalyDetector:
         if input_shape:
             # Encoder
             input_layer = Input(shape=(input_shape,))
+            
+            # --- MODIFICATION : Ajout de Dropout et architecture plus robuste ---
             encoder = Dense(64, activation="relu")(input_layer)
+            encoder = Dropout(0.2)(encoder) # Evite d'apprendre le bruit
+            
             encoder = Dense(32, activation="relu")(encoder)
             encoder = Dense(16, activation="relu")(encoder)
             
@@ -292,18 +297,21 @@ class AnomalyDetector:
             output_layer = Dense(input_shape, activation="linear")(decoder) # Reconstruction
             
             self.model = tf.keras.Model(inputs=input_layer, outputs=output_layer)
-            self.model.compile(optimizer='adam', loss='mse')
+            
+            # --- MODIFICATION : Utilisation de MAE pour l'entrainement (plus robuste aux outliers) ---
+            self.model.compile(optimizer='adam', loss='mae') 
             self.threshold = None
         else:
             self.model = None
             self.threshold = None
 
-    def fit(self, X_train, y_train):
+    def fit(self, X_train, y_train, X_val=None, y_val=None):
         """
         Entraînement uniquement sur le trafic BÉNIN (y=0).
         Le modèle apprend à reconstruire le trafic normal.
         """
         print("   [AutoEncoder] Entraînement sur trafic bénin uniquement...")
+        
         # Alignement index pour filtrage
         if isinstance(X_train, pd.DataFrame):
             X_train = X_train.reset_index(drop=True)
@@ -326,12 +334,43 @@ class AnomalyDetector:
             callbacks=[EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)]
         )
         
-        # Calcul du seuil de reconstruction (MSE + 3*StdDev sur train)
-        reconstructions = self.model.predict(X_benign, verbose=0)
-        mse = np.mean(np.power(X_benign - reconstructions, 2), axis=1)
-        # self.threshold = np.mean(mse) + 1.5 * np.std(mse) 
-        self.threshold = np.percentile(mse, 95) # Seuil basé sur le 95ème percentile (plus robuste aux outliers)
-        print(f"   [AutoEncoder] Seuil d'anomalie défini à : {self.threshold:.6f} (95th percentile)")
+        # --- MODIFICATION : Calcul optimisé du seuil sur la Validation ---
+        if X_val is not None and y_val is not None:
+            self.find_optimal_threshold(X_val, y_val)
+        else:
+            # Fallback : Méthode statistique sur le train (moins précis)
+            print("   [AutoEncoder] Pas de set de validation fourni. Calcul seuil statistique sur Train...")
+            reconstructions = self.model.predict(X_benign, verbose=0)
+            mse = np.mean(np.power(X_benign - reconstructions, 2), axis=1)
+            self.threshold = np.percentile(mse, 95)
+            print(f"   [AutoEncoder] Seuil (95th percentile) : {self.threshold:.6f}")
+
+    def find_optimal_threshold(self, X, y):
+        """
+        Trouve le seuil qui maximise le F1-Score sur un set contenant des attaques.
+        """
+        print("   [AutoEncoder] Optimisation du seuil sur le set de Validation...")
+        # 1. Obtenir les erreurs de reconstruction (Score d'anomalie)
+        # Note : On garde le MSE pour le score d'anomalie car il pénalise + les grosses erreurs
+        reconstructions = self.model.predict(X, verbose=0)
+        mse = np.mean(np.power(X - reconstructions, 2), axis=1)
+        
+        # 2. Calculer les précisions/rappels pour tous les seuils possibles
+        precisions, recalls, thresholds = precision_recall_curve(y, mse)
+        
+        # 3. Calculer le F1 Score pour chaque seuil
+        # On évite la division par zéro
+        numerator = 2 * (precisions * recalls)
+        denominator = (precisions + recalls)
+        f1_scores = np.divide(numerator, denominator, out=np.zeros_like(numerator), where=denominator!=0)
+        
+        # 4. Trouver l'index du meilleur F1
+        best_idx = np.argmax(f1_scores)
+        best_threshold = thresholds[best_idx]
+        best_f1 = f1_scores[best_idx]
+        
+        self.threshold = best_threshold
+        print(f"   [AutoEncoder] Seuil Optimal trouvé : {self.threshold:.6f} (Best Val F1: {best_f1:.4f})")
 
     def predict(self, X):
         """
