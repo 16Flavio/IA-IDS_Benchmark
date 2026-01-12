@@ -7,3 +7,7 @@ data/
 venv/
 
 __pycache__/
+
+models/
+
+patch_ae.py

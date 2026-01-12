@@ -1,32 +1,103 @@
 import pandas as pd
 import numpy as np
 import os
+import glob
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelEncoder
+from sklearn.preprocessing import LabelEncoder, StandardScaler
 
 class DataLoader:
+    """
+    Handles loading and preprocessing of Cyber Security datasets (NSL-KDD, CIC-IDS2017).
+    """
     def __init__(self, dataset_name='nsl_kdd'):
+        """
+        Initialize the DataLoader.
+
+        Args:
+            dataset_name (str): The name of the dataset to load ('nsl_kdd' or 'cic_ids2017').
+        """
         self.dataset_name = dataset_name
-        # On récupère le chemin absolu du dossier racine du projet
-        # (On remonte de deux niveaux depuis ce fichier data_loader.py)
         self.base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        self.processed_dir = os.path.join(self.base_dir, 'data', 'processed', self.dataset_name)
+        if not os.path.exists(self.processed_dir):
+            os.makedirs(self.processed_dir)
         
     def load_data(self):
-        print(f"Chargement des données locales pour : {self.dataset_name}...")
+        """
+        Load data, either from pre-processed files or by processing raw files.
+
+        Returns:
+            tuple: A tuple containing (X_train, X_test, X_val, y_train, y_test, y_val, labels_test, labels_val).
+        """
+        print(f"Chargement des données pour : {self.dataset_name}...")
+        
+        split_files = ['X_train.joblib', 'X_test.joblib', 'X_val.joblib', 
+                       'y_train.joblib', 'y_test.joblib', 'y_val.joblib', 
+                       'labels_val.joblib', 'labels_test.joblib']
+        
+        all_exist = all(os.path.exists(os.path.join(self.processed_dir, f)) for f in split_files)
+        
+        if all_exist:
+            print("   -> Chargement des données pré-traitées sauvegardées...")
+            import joblib
+            X_train = joblib.load(os.path.join(self.processed_dir, 'X_train.joblib'))
+            X_test = joblib.load(os.path.join(self.processed_dir, 'X_test.joblib'))
+            X_val = joblib.load(os.path.join(self.processed_dir, 'X_val.joblib'))
+            y_train = joblib.load(os.path.join(self.processed_dir, 'y_train.joblib'))
+            y_test = joblib.load(os.path.join(self.processed_dir, 'y_test.joblib'))
+            y_val = joblib.load(os.path.join(self.processed_dir, 'y_val.joblib'))
+            labels_test = joblib.load(os.path.join(self.processed_dir, 'labels_test.joblib'))
+            labels_val = joblib.load(os.path.join(self.processed_dir, 'labels_val.joblib'))
+            
+            print(f"   -> Données chargées. Train: {X_train.shape}, Test: {X_test.shape}, Val: {X_val.shape}")
+            return X_train, X_test, X_val, y_train, y_test, y_val, labels_test, labels_val
+
+        print("   -> Création des splits (60% Train, 20% Test, 20% Val)...")
         if self.dataset_name == 'nsl_kdd':
-            return self._load_nsl_kdd()
+            X, y, labels = self._load_nsl_kdd()
         elif self.dataset_name == 'cic_ids2017':
-            return self._load_cic_ids()
+            X, y, labels = self._load_cic_ids()
         else:
-            raise ValueError("Dataset inconnu. Choisir 'nsl_kdd' ou 'cic_ids2017'.")
+            raise ValueError("Dataset inconnu.")
+
+        X_train, X_temp, y_train, y_temp, _, labels_temp = train_test_split(
+            X, y, labels, test_size=0.4, random_state=42, stratify=y
+        )
+        
+        X_test, X_val, y_test, y_val, labels_test, labels_val = train_test_split(
+            X_temp, y_temp, labels_temp, test_size=0.5, random_state=42, stratify=y_temp
+        )
+        
+        print("Normalisation des données (StandardScaler)...")
+        scaler = StandardScaler()
+        cols = X.columns
+        X_train = pd.DataFrame(scaler.fit_transform(X_train), columns=cols)
+        X_test = pd.DataFrame(scaler.transform(X_test), columns=cols)
+        X_val = pd.DataFrame(scaler.transform(X_val), columns=cols)
+        
+        import joblib
+        print("   -> Sauvegarde des splits pour la cohérence...")
+        joblib.dump(X_train, os.path.join(self.processed_dir, 'X_train.joblib'))
+        joblib.dump(X_test, os.path.join(self.processed_dir, 'X_test.joblib'))
+        joblib.dump(X_val, os.path.join(self.processed_dir, 'X_val.joblib'))
+        joblib.dump(y_train, os.path.join(self.processed_dir, 'y_train.joblib'))
+        joblib.dump(y_test, os.path.join(self.processed_dir, 'y_test.joblib'))
+        joblib.dump(y_val, os.path.join(self.processed_dir, 'y_val.joblib'))
+        joblib.dump(labels_test, os.path.join(self.processed_dir, 'labels_test.joblib'))
+        joblib.dump(labels_val, os.path.join(self.processed_dir, 'labels_val.joblib'))
+        
+        return X_train, X_test, X_val, y_train, y_test, y_val, labels_test, labels_val
 
     def _load_nsl_kdd(self):
-        # Chemin vers le fichier local
-        file_path = os.path.join(self.base_dir, 'data', 'nsl_kdd', 'KDDTrain+.txt')
-        
-        if not os.path.exists(file_path):
-            raise FileNotFoundError(f"Fichier introuvable : {file_path}. As-tu téléchargé KDDTrain+.txt ?")
+        """
+        Load the NSL-KDD dataset.
 
+        Returns:
+            tuple: (X, y, labels) - Features, binary labels, original attack labels.
+        """
+        file_path = os.path.join(self.base_dir, 'data', 'nsl_kdd', 'KDDTrain+.txt')
+        if not os.path.exists(file_path): raise FileNotFoundError(file_path)
+        
         cols = ['duration', 'protocol_type', 'service', 'flag', 'src_bytes', 'dst_bytes', 
                 'land', 'wrong_fragment', 'urgent', 'hot', 'num_failed_logins', 
                 'logged_in', 'num_compromised', 'root_shell', 'su_attempted', 
@@ -42,49 +113,67 @@ class DataLoader:
         
         df = pd.read_csv(file_path, names=cols)
         
-        # Encodage binaire (Normal = 0, Attaque = 1)
+        labels = df['attack']
         df['label'] = df['attack'].apply(lambda x: 0 if x == 'normal' else 1)
         
-        # Encodage des strings en nombres
         for col in ['protocol_type', 'service', 'flag']:
             df[col] = LabelEncoder().fit_transform(df[col])
             
         X = df.drop(['attack', 'level', 'label'], axis=1)
         y = df['label']
-        
-        return train_test_split(X, y, test_size=0.3, random_state=42)
+        return X, y, labels
 
     def _load_cic_ids(self):
-        # Chemin vers le fichier local (Wednesday = Attaques DoS / DDoS / Heartbleed)
-        file_path = os.path.join(self.base_dir, 'data', 'cic_ids2017', 'Wednesday-workingHours.pcap_ISCX.csv')
-        
-        if not os.path.exists(file_path):
-            raise FileNotFoundError(f"Fichier introuvable : {file_path}. Vérifie le dossier data/cic_ids2017/")
+        """
+        Load the CIC-IDS2017 dataset.
 
-        # Le fichier réel est gros, on lit tout (ou tu peux mettre nrows=50000 pour tester vite)
-        df = pd.read_csv(file_path)
+        Returns:
+            tuple: (X, y, labels) - Features, binary labels, original attack labels.
+        """
+        data_dir = os.path.join(self.base_dir, 'data', 'cic_ids2017')
         
-        # NETTOYAGE CRITIQUE POUR CIC-IDS2017
-        # Retirer les espaces dans les noms de colonnes (" Label" -> "Label")
-        df.columns = df.columns.str.strip()
+        all_files = glob.glob(os.path.join(data_dir, "*.csv"))
         
-        # Gérer les infinis et les valeurs vides (sinon le Random Forest plante)
+        if not all_files:
+            raise FileNotFoundError(f"Aucun fichier CSV trouvé dans {data_dir}. Vérifiez l'emplacement.")
+
+        print(f"   -> Fichiers trouvés : {len(all_files)}")
+        
+        df_list = []
+        SAMPLE_RATIO = 1
+        
+        for filename in all_files:
+            print(f"   -> Lecture de {os.path.basename(filename)}... (Ratio: {SAMPLE_RATIO})")
+            try:
+                temp_df = pd.read_csv(filename, encoding='cp1252', low_memory=False)
+                
+                temp_df.columns = temp_df.columns.str.strip()
+                
+                if SAMPLE_RATIO < 1.0:
+                    temp_df = temp_df.sample(frac=SAMPLE_RATIO, random_state=42)
+                
+                df_list.append(temp_df)
+            except Exception as e:
+                print(f"      [ERREUR] Impossible de lire {filename}: {e}")
+
+        if not df_list:
+            raise ValueError("Aucune donnée n'a pu être chargée.")
+
+        print("   -> Fusion des fichiers journaliers...")
+        df = pd.concat(df_list, ignore_index=True)
+        
+        print("   -> Nettoyage (Inf/NaN)...")
         df.replace([np.inf, -np.inf], np.nan, inplace=True)
         df.dropna(inplace=True)
         
-        # Encodage Cible : BENIGN = 0, Le reste (DoS, etc.) = 1
+        labels = df['Label']
         df['label'] = df['Label'].apply(lambda x: 0 if x == 'BENIGN' else 1)
         
-        # Sélectionner uniquement les colonnes numériques (pour simplifier le ML)
-        # On exclut 'Label' (string) et notre nouvelle target 'label'
         numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
         if 'label' in numeric_cols: numeric_cols.remove('label')
         
         X = df[numeric_cols]
         y = df['label']
         
-        # On réduit un peu la taille si besoin pour que ça tourne sur un PC normal
-        # X = X.iloc[:100000] 
-        # y = y.iloc[:100000]
-        
-        return train_test_split(X, y, test_size=0.3, random_state=42)
+        print(f"   -> Dataset Final chargé : {len(X)} lignes.")
+        return X, y, labels
