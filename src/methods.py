@@ -10,7 +10,6 @@ import os
 import numpy as np
 import pandas as pd
 
-# --- CONFIGURATION GPU ---
 try:
     gpus = tf.config.list_physical_devices('GPU')
     if gpus:
@@ -22,7 +21,6 @@ try:
 except RuntimeError as e:
     print(f"Erreur configuration GPU : {e}")
 
-# Try to import XGBoost
 try:
     from xgboost import XGBClassifier
     HAS_XGBOOST = True
@@ -30,51 +28,65 @@ except ImportError:
     HAS_XGBOOST = False
     print("XGBoost non installé. Le détecteur XGBoost ne fonctionnera pas.")
 
-# MÉTHODE TRADITIONNELLE (Basée sur des seuils statistiques - Anomaly Detection + Defense Active)
 class RuleBasedDetector(BaseEstimator):
+    """
+    Détecteur basé sur des règles statistiques et une liste noire d'IPs.
+    """
     def __init__(self):
+        """
+        Initialise le détecteur avec des seuils vides et une liste de surveillance.
+        """
         self.thresholds = {}
         self.features_to_monitor = [
             'Flow Duration', 'Total Fwd Packets', 'Total Backward Packets', 
             'Total Length of Fwd Packets', 'Fwd Packet Length Max',
             'src_bytes', 'dst_bytes', 'count', 'srv_count'
         ]
-        # Active Defense : Liste noire d'IPs
         self.blocked_ips = set()
 
     def update_blocklist(self, ip_address):
-        """Ajoute une IP à la liste noire."""
+        """
+        Ajoute une adresse IP à la liste noire.
+
+        Args:
+            ip_address (str): L'adresse IP à bloquer.
+        """
         self.blocked_ips.add(ip_address)
-        # print(f"   [FIREWALL] IP Bannnie : {ip_address}")
 
     def is_blocked(self, ip_address):
-        """Vérifie si une IP est bloquée."""
+        """
+        Vérifie si une adresse IP est présente dans la liste noire.
+
+        Args:
+            ip_address (str): L'adresse IP à vérifier.
+
+        Returns:
+            bool: True si l'IP est bloquée, False sinon.
+        """
         return ip_address in self.blocked_ips
 
     def fit(self, X, y):
         """
-        Apprend le profil 'Normal' du trafic.
-        On ne garde que le trafic Bénin (y==0) pour calculer les seuils.
+        Calcule les seuils statistiques basés sur le trafic bénin.
+
+        Args:
+            X (pd.DataFrame): Les données d'entraînement.
+            y (array-like): Les labels associés (0 pour bénin).
         """
         print("   [RuleBased] Calcul des seuils statistiques sur le trafic bénin...")
-        # On s'assure de travailler sur un DataFrame
         if not isinstance(X, pd.DataFrame):
             print("   [RuleBased] Attention: Input n'est pas un DataFrame.")
             return
 
-        # Alignement des index pour éviter l'erreur "Unalignable boolean Series"
         try:
-            # On reset les index pour être sûr
             X = X.reset_index(drop=True)
             if hasattr(y, 'reset_index'):
                 y = y.reset_index(drop=True)
-            elif hasattr(y, 'values'): # If it's a series wrapped
+            elif hasattr(y, 'values'): 
                 y = pd.Series(y.values)
             else:
                 y = pd.Series(y)
                 
-            # Filtrer uniquement le trafic bénin
-            # y doit être un booléen ou 0/1. On assume 0 = Benign
             X_benign = X[y == 0]
             
             for feature in self.features_to_monitor:
@@ -85,10 +97,18 @@ class RuleBasedDetector(BaseEstimator):
             print(f"   [RuleBased] ERREUR lors du fit : {e}")
 
     def predict(self, X):
+        """
+        Prédit si le trafic est normal ou une anomalie en fonction des seuils.
+
+        Args:
+            X (pd.DataFrame): Les données à analyser.
+
+        Returns:
+            np.array: Un tableau de prédictions (0 ou 1).
+        """
         preds = []
         
         if not self.thresholds:
-            # Si pas de seuils (pas de fit), on renvoie tout à 0 (Safe)
             return np.zeros(len(X), dtype=int)
 
         if not isinstance(X, pd.DataFrame):
@@ -96,7 +116,6 @@ class RuleBasedDetector(BaseEstimator):
 
         for _, row in X.iterrows():
             is_anomaly = False
-            # Une requête est une anomalie si elle explose l'un des compteurs
             for feature, limit in self.thresholds.items():
                 if feature in row and row[feature] > limit:
                     is_anomaly = True
@@ -107,7 +126,12 @@ class RuleBasedDetector(BaseEstimator):
         return np.array(preds)
     
     def save_model(self, path):
-        # On sauvegarde aussi la blocklist, pourquoi pas (bien que ce soit dynamique)
+        """
+        Sauvegarde les seuils et la liste noire dans un fichier.
+
+        Args:
+            path (str): Le chemin du fichier de sauvegarde.
+        """
         data = {
             'thresholds': self.thresholds,
             'blocked_ips': self.blocked_ips
@@ -116,9 +140,14 @@ class RuleBasedDetector(BaseEstimator):
         print(f"Règles statistiques sauvegardées : {path}")
     
     def load_model(self, path):
+        """
+        Charge les seuils et la liste noire depuis un fichier.
+
+        Args:
+            path (str): Le chemin du fichier à charger.
+        """
         if os.path.exists(path):
             data = joblib.load(path)
-            # Gestion rétro-compatibilité (si ancien fichier contenant juste dict)
             if isinstance(data, dict) and 'thresholds' in data:
                 self.thresholds = data['thresholds']
                 self.blocked_ips = data.get('blocked_ips', set())
@@ -131,36 +160,65 @@ class RuleBasedDetector(BaseEstimator):
             print("Erreur : Fichier règles introuvable.")
 
 
-# MACHINE LEARNING (Random Forest)
 class MLDetector:
+    """
+    Détecteur basé sur le Machine Learning (Random Forest).
+    """
     def __init__(self):
-        # Optimisation : n_jobs=-1 utilise tous les cœurs
+        """
+        Initialise le modèle Random Forest.
+        """
         self.model = RandomForestClassifier(n_estimators=200, n_jobs=-1, random_state=42)
         
     def train(self, X_train, y_train, X_val=None, y_val=None):
-        # RF n'utilise pas de validation set pour le training direct, mais on garde la signature
+        """
+        Entraîne le modèle Random Forest.
+
+        Args:
+            X_train (array-like): Données d'entraînement.
+            y_train (array-like): Labels d'entraînement.
+            X_val (array-like, optional): Données de validation (non utilisé pour RF mais gardé pour uniformité).
+            y_val (array-like, optional): Labels de validation.
+        """
         self.model.fit(X_train, y_train)
         
     def predict(self, X):
+        """
+        Prédit les classes pour les données fournies.
+        """
         return self.model.predict(X)
     
     def predict_proba(self, X):
+        """
+        Retourne les probabilités des classes prédites.
+        """
         return self.model.predict_proba(X)
 
     def save_model(self, path):
+        """
+        Sauvegarde le modèle sur le disque.
+        """
         joblib.dump(self.model, path)
         print(f"Modèle ML sauvegardé : {path}")
 
     def load_model(self, path):
+        """
+        Charge le modèle depuis le disque.
+        """
         if os.path.exists(path):
             self.model = joblib.load(path)
             print(f"Modèle ML chargé depuis : {path}")
         else:
             print("Erreur : Fichier modèle introuvable.")
 
-# XGBOOST DETECTOR
 class XGBoostDetector:
+    """
+    Détecteur basé sur XGBoost (eXtreme Gradient Boosting).
+    """
     def __init__(self):
+        """
+        Initialise le modèle XGBoost si la librairie est disponible.
+        """
         if not HAS_XGBOOST:
             raise ImportError("XGBoost n'est pas installé.")
         
@@ -176,6 +234,9 @@ class XGBoostDetector:
         )
 
     def train(self, X_train, y_train, X_val=None, y_val=None):
+        """
+        Entraîne le modèle XGBoost avec monitoring possible sur le set de validation.
+        """
         eval_set = []
         if X_val is not None and y_val is not None:
             eval_set = [(X_train, y_train), (X_val, y_val)]
@@ -187,53 +248,65 @@ class XGBoostDetector:
         )
 
     def predict(self, X):
+        """
+        Prédit les classes.
+        """
         return self.model.predict(X)
 
     def predict_proba(self, X):
+        """
+        Retourne les probabilités.
+        """
         return self.model.predict_proba(X)
 
     def save_model(self, path):
+        """
+        Sauvegarde le modèle.
+        """
         joblib.dump(self.model, path)
         print(f"Modèle XGBoost sauvegardé : {path}")
 
     def load_model(self, path):
+        """
+        Charge le modèle.
+        """
         if os.path.exists(path):
             self.model = joblib.load(path)
             print(f"Modèle XGBoost chargé depuis : {path}")
         else:
             print("Erreur : Fichier modèle introuvable.")
 
-# DEEP LEARNING (Enhanced MLP)
 class DLDetector:
+    """
+    Détecteur basé sur le Deep Learning (Réseau de Neurones Multi-Couches).
+    """
     def __init__(self, input_shape=None):
+        """
+        Initialise l'architecture du modèle si input_shape est fourni.
+        """
         if input_shape:
             self.model = Sequential([
                 Input(shape=(input_shape,)),
                 
-                # Couche 1
                 Dense(256),
                 BatchNormalization(),
                 Activation('relu'),
                 Dropout(0.4),
                 
-                # Couche 2
                 Dense(128),
                 BatchNormalization(),
                 Activation('relu'),
                 Dropout(0.3),
                 
-                # Couche 3
                 Dense(64),
                 BatchNormalization(),
                 Activation('relu'),
                 Dropout(0.2),
 
-                # Couche 4
                 Dense(32),
                 BatchNormalization(),
                 Activation('relu'),
                 
-                # Sortie
                 Dense(1, activation='sigmoid')
             ])
             
@@ -242,6 +315,9 @@ class DLDetector:
             self.model = None
 
     def train(self, X_train, y_train, X_val=None, y_val=None):
+        """
+        Entraîne le modèle avec Early Stopping et réduction du learning rate.
+        """
         callbacks = [
             EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True),
             ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=5, min_lr=1e-6)
@@ -261,44 +337,57 @@ class DLDetector:
         )
         
     def predict(self, X):
+        """
+        Prédit les classes (0 ou 1) en fonction d'un seuil de 0.5.
+        """
         return (self.model.predict(X, batch_size=1024, verbose=0) > 0.5).astype("int32")
     
     def predict_proba(self, X):
+        """
+        Retourne la probabilité d'anomalie/attaque.
+        """
         return self.model.predict(X, batch_size=1024, verbose=0)
     
     def save_model(self, path):
-        self.model.save(path) # Sauvegarde au format .keras ou .h5
+        """
+        Sauvegarde le modèle complet (architecture + poids).
+        """
+        self.model.save(path) 
         print(f"Modèle DL sauvegardé : {path}")
 
     def load_model(self, path):
+        """
+        Charge un modèle sauvegardé.
+        """
         if os.path.exists(path):
             self.model = load_model(path)
             print(f"Modèle DL chargé depuis : {path}")
         else:
             print(f"Erreur : Fichier modèle introuvable {path}")
 
-# AUTO-ENCODER (DÉTECTION D'ANOMALIES NON-SUPERVISÉE - ZERO DAY)
 class AnomalyDetector:
+    """
+    Détecteur d'anomalies basé sur un Auto-Encoder (Apprentissage non-supervisé / Zero-Day).
+    """
     def __init__(self, input_shape=None):
+        """
+        Initialise l'Auto-Encoder.
+        """
         if input_shape:
-            # Encoder
             input_layer = Input(shape=(input_shape,))
             
-            # --- MODIFICATION : Ajout de Dropout et architecture plus robuste ---
             encoder = Dense(64, activation="relu")(input_layer)
-            encoder = Dropout(0.2)(encoder) # Evite d'apprendre le bruit
+            encoder = Dropout(0.2)(encoder) 
             
             encoder = Dense(32, activation="relu")(encoder)
             encoder = Dense(16, activation="relu")(encoder)
             
-            # Decoder
             decoder = Dense(32, activation="relu")(encoder)
             decoder = Dense(64, activation="relu")(decoder)
-            output_layer = Dense(input_shape, activation="linear")(decoder) # Reconstruction
+            output_layer = Dense(input_shape, activation="linear")(decoder) 
             
             self.model = tf.keras.Model(inputs=input_layer, outputs=output_layer)
             
-            # --- MODIFICATION : Utilisation de MAE pour l'entrainement (plus robuste aux outliers) ---
             self.model.compile(optimizer='adam', loss='mae') 
             self.threshold = None
         else:
@@ -307,12 +396,10 @@ class AnomalyDetector:
 
     def fit(self, X_train, y_train, X_val=None, y_val=None):
         """
-        Entraînement uniquement sur le trafic BÉNIN (y=0).
-        Le modèle apprend à reconstruire le trafic normal.
+        Entraîne l'Auto-Encoder uniquement sur le trafic bénin.
         """
         print("   [AutoEncoder] Entraînement sur trafic bénin uniquement...")
         
-        # Alignement index pour filtrage
         if isinstance(X_train, pd.DataFrame):
             X_train = X_train.reset_index(drop=True)
             if hasattr(y_train, 'reset_index'):
@@ -320,10 +407,8 @@ class AnomalyDetector:
             elif hasattr(y_train, 'values'):
                 y_train = pd.Series(y_train.values)
         
-        # Filtre Benign
         X_benign = X_train[y_train == 0]
         
-        # Training
         self.model.fit(
             X_benign, X_benign,
             epochs=50,
@@ -334,11 +419,9 @@ class AnomalyDetector:
             callbacks=[EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)]
         )
         
-        # --- MODIFICATION : Calcul optimisé du seuil sur la Validation ---
         if X_val is not None and y_val is not None:
             self.find_optimal_threshold(X_val, y_val)
         else:
-            # Fallback : Méthode statistique sur le train (moins précis)
             print("   [AutoEncoder] Pas de set de validation fourni. Calcul seuil statistique sur Train...")
             reconstructions = self.model.predict(X_benign, verbose=0)
             mse = np.mean(np.power(X_benign - reconstructions, 2), axis=1)
@@ -347,24 +430,18 @@ class AnomalyDetector:
 
     def find_optimal_threshold(self, X, y):
         """
-        Trouve le seuil qui maximise le F1-Score sur un set contenant des attaques.
+        Calcule le seuil de d'erreur de reconstruction optimal en maximisant le F1-Score sur le set de validation.
         """
         print("   [AutoEncoder] Optimisation du seuil sur le set de Validation...")
-        # 1. Obtenir les erreurs de reconstruction (Score d'anomalie)
-        # Note : On garde le MSE pour le score d'anomalie car il pénalise + les grosses erreurs
         reconstructions = self.model.predict(X, verbose=0)
         mse = np.mean(np.power(X - reconstructions, 2), axis=1)
         
-        # 2. Calculer les précisions/rappels pour tous les seuils possibles
         precisions, recalls, thresholds = precision_recall_curve(y, mse)
         
-        # 3. Calculer le F1 Score pour chaque seuil
-        # On évite la division par zéro
         numerator = 2 * (precisions * recalls)
         denominator = (precisions + recalls)
         f1_scores = np.divide(numerator, denominator, out=np.zeros_like(numerator), where=denominator!=0)
         
-        # 4. Trouver l'index du meilleur F1
         best_idx = np.argmax(f1_scores)
         best_threshold = thresholds[best_idx]
         best_f1 = f1_scores[best_idx]
@@ -374,23 +451,25 @@ class AnomalyDetector:
 
     def predict(self, X):
         """
-        Si Erreur Reconstruction > Seuil => Anomalie (1)
-        Sinon => Normal (0)
+        Prédit si le trafic est une anomalie (Erreur reconstruction > Seuil).
         """
         reconstructions = self.model.predict(X, verbose=0)
         mse = np.mean(np.power(X - reconstructions, 2), axis=1)
         
-        # Si mse > seuil, c'est une anomalie (1)
         return (mse > self.threshold).astype(int)
     
     def predict_proba(self, X):
-        # Pour ROC Curve, on peut renvoyer la MSE normalisée ou brute
+        """
+        Retourne l'erreur de reconstruction (MSE), qui sert de score d'anomalie.
+        """
         reconstructions = self.model.predict(X, verbose=0)
         mse = np.mean(np.power(X - reconstructions, 2), axis=1)
-        return mse # Plus c'est grand, plus c'est une anomalie
+        return mse 
 
     def save_model(self, path):
-        # On sauvegarde le modèle Keras + le seuil
+        """
+        Sauvegarde le modèle et le seuil optimisé.
+        """
         base_dir = os.path.dirname(path)
         base_name = os.path.basename(path).replace('.keras', '')
         
@@ -402,7 +481,9 @@ class AnomalyDetector:
         print(f"AutoEncoder sauvegardé : {keras_path} (Seuil: {self.threshold:.4f})")
 
     def load_model(self, path):
-        # Path est générique, on déduit les 2 fichiers
+        """
+        Charge le modèle et le seuil.
+        """
         base_dir = os.path.dirname(path)
         base_name = os.path.basename(path).replace('.keras', '')
         
@@ -417,17 +498,25 @@ class AnomalyDetector:
             print(f"Erreur : Fichiers AutoEncoder introuvables ({keras_path})")
 
 
-# HYBRIDE (DL + LOGIQUE DE SÉCURITÉ)
 class HybridDetector:
+    """
+    Système hybride combinant un modèle Deep Learning et un système basé sur des règles.
+    """
     def __init__(self, dl_model, rb_model=None):
+        """
+        Initialise le détecteur hybride.
+        """
         self.dl_model = dl_model
-        self.rb_model = rb_model # Le modèle basé sur les règles statistiques
+        self.rb_model = rb_model 
         
     def predict(self, X):
+        """
+        Prédit la classe en combinant les sorties du DL et du RuleBased.
+        Utilise le RuleBasedDetector si le DL est incertain.
+        """
         probabilities = self.dl_model.predict_proba(X)
         final_preds = []
         
-        # Pré-calcul des règles si disponible
         if self.rb_model:
             rb_preds = self.rb_model.predict(X) 
         else:
@@ -436,22 +525,21 @@ class HybridDetector:
         for i, prob in enumerate(probabilities):
             p = prob[0]
             
-            # 1. Confiance IA Élevée
             if p > 0.80:
-                final_preds.append(1) # Attaque quasi-sûre
+                final_preds.append(1) 
             elif p < 0.20:
-                final_preds.append(0) # Benign quasi-sûr
+                final_preds.append(0) 
             
-            # 2. IA Incertaine (entre 0.20 et 0.80) -> On demande aux règles
             else:
-                # Si le modèle statistique dit "Anomalie", on le croit
                 if rb_preds[i] == 1:
                     final_preds.append(1)
                 else:
-                    # Sinon, on se rabat sur la décision de l'IA (seuil 0.5)
                     final_preds.append(1 if p >= 0.5 else 0)
                     
         return np.array(final_preds)
     
     def predict_proba(self, X):
+        """
+        Retourne la probabilité brute du modèle Deep Learning.
+        """
         return self.dl_model.predict(X)

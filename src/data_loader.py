@@ -6,18 +6,31 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 
 class DataLoader:
+    """
+    Handles loading and preprocessing of Cyber Security datasets (NSL-KDD, CIC-IDS2017).
+    """
     def __init__(self, dataset_name='nsl_kdd'):
+        """
+        Initialize the DataLoader.
+
+        Args:
+            dataset_name (str): The name of the dataset to load ('nsl_kdd' or 'cic_ids2017').
+        """
         self.dataset_name = dataset_name
-        # On remonte de deux niveaux depuis ce fichier pour trouver la racine
         self.base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         self.processed_dir = os.path.join(self.base_dir, 'data', 'processed', self.dataset_name)
         if not os.path.exists(self.processed_dir):
             os.makedirs(self.processed_dir)
         
     def load_data(self):
+        """
+        Load data, either from pre-processed files or by processing raw files.
+
+        Returns:
+            tuple: A tuple containing (X_train, X_test, X_val, y_train, y_test, y_val, labels_test, labels_val).
+        """
         print(f"Chargement des données pour : {self.dataset_name}...")
         
-        # Check if pre-processed data exists
         split_files = ['X_train.joblib', 'X_test.joblib', 'X_val.joblib', 
                        'y_train.joblib', 'y_test.joblib', 'y_val.joblib', 
                        'labels_val.joblib', 'labels_test.joblib']
@@ -39,7 +52,6 @@ class DataLoader:
             print(f"   -> Données chargées. Train: {X_train.shape}, Test: {X_test.shape}, Val: {X_val.shape}")
             return X_train, X_test, X_val, y_train, y_test, y_val, labels_test, labels_val
 
-        # Sinon, on charge depuis les CSV bruts
         print("   -> Création des splits (60% Train, 20% Test, 20% Val)...")
         if self.dataset_name == 'nsl_kdd':
             X, y, labels = self._load_nsl_kdd()
@@ -48,12 +60,10 @@ class DataLoader:
         else:
             raise ValueError("Dataset inconnu.")
 
-        # 1. Split Train (60%) vs Temp (40%)
         X_train, X_temp, y_train, y_temp, _, labels_temp = train_test_split(
             X, y, labels, test_size=0.4, random_state=42, stratify=y
         )
         
-        # 2. Split Temp en Test (50% de temp -> 20% total) et Val (50% de temp -> 20% total)
         X_test, X_val, y_test, y_val, labels_test, labels_val = train_test_split(
             X_temp, y_temp, labels_temp, test_size=0.5, random_state=42, stratify=y_temp
         )
@@ -61,12 +71,10 @@ class DataLoader:
         print("Normalisation des données (StandardScaler)...")
         scaler = StandardScaler()
         cols = X.columns
-        # On fit uniquement sur le train
         X_train = pd.DataFrame(scaler.fit_transform(X_train), columns=cols)
         X_test = pd.DataFrame(scaler.transform(X_test), columns=cols)
         X_val = pd.DataFrame(scaler.transform(X_val), columns=cols)
         
-        # Sauvegarde pour les prochaines fois
         import joblib
         print("   -> Sauvegarde des splits pour la cohérence...")
         joblib.dump(X_train, os.path.join(self.processed_dir, 'X_train.joblib'))
@@ -81,6 +89,12 @@ class DataLoader:
         return X_train, X_test, X_val, y_train, y_test, y_val, labels_test, labels_val
 
     def _load_nsl_kdd(self):
+        """
+        Load the NSL-KDD dataset.
+
+        Returns:
+            tuple: (X, y, labels) - Features, binary labels, original attack labels.
+        """
         file_path = os.path.join(self.base_dir, 'data', 'nsl_kdd', 'KDDTrain+.txt')
         if not os.path.exists(file_path): raise FileNotFoundError(file_path)
         
@@ -110,10 +124,14 @@ class DataLoader:
         return X, y, labels
 
     def _load_cic_ids(self):
-        # Dossier contenant tous les CSV (Lundi, Mardi, Mercredi...)
+        """
+        Load the CIC-IDS2017 dataset.
+
+        Returns:
+            tuple: (X, y, labels) - Features, binary labels, original attack labels.
+        """
         data_dir = os.path.join(self.base_dir, 'data', 'cic_ids2017')
         
-        # On cherche tous les fichiers .csv dans le dossier
         all_files = glob.glob(os.path.join(data_dir, "*.csv"))
         
         if not all_files:
@@ -127,14 +145,10 @@ class DataLoader:
         for filename in all_files:
             print(f"   -> Lecture de {os.path.basename(filename)}... (Ratio: {SAMPLE_RATIO})")
             try:
-                # Lecture partielle pour économiser la mémoire
-                # On utilise encoding='cp1252' car certains fichiers CIC ont des caractères bizarres
                 temp_df = pd.read_csv(filename, encoding='cp1252', low_memory=False)
                 
-                # Nettoyage immédiat des noms de colonnes
                 temp_df.columns = temp_df.columns.str.strip()
                 
-                # Sampling aléatoire
                 if SAMPLE_RATIO < 1.0:
                     temp_df = temp_df.sample(frac=SAMPLE_RATIO, random_state=42)
                 
@@ -145,22 +159,17 @@ class DataLoader:
         if not df_list:
             raise ValueError("Aucune donnée n'a pu être chargée.")
 
-        # Fusion de tous les jours
         print("   -> Fusion des fichiers journaliers...")
         df = pd.concat(df_list, ignore_index=True)
         
-        # Nettoyage Global
         print("   -> Nettoyage (Inf/NaN)...")
         df.replace([np.inf, -np.inf], np.nan, inplace=True)
         df.dropna(inplace=True)
         
-        # Création des labels
         labels = df['Label']
         df['label'] = df['Label'].apply(lambda x: 0 if x == 'BENIGN' else 1)
         
-        # Sélection colonnes numériques
         numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-        # On retire la cible numérique si elle est dedans
         if 'label' in numeric_cols: numeric_cols.remove('label')
         
         X = df[numeric_cols]

@@ -10,7 +10,7 @@ from src.data_loader import DataLoader
 from src.methods import RuleBasedDetector, MLDetector, DLDetector, HybridDetector, XGBoostDetector, HAS_XGBOOST, AnomalyDetector
 from src.evaluation import Evaluator
 from src.simulation import TrafficSimulator
-# Import optionnel pour l'attaque (si fichier présent)
+
 try:
     from src.adversarial import test_robustness
     HAS_ADVERSARIAL = True
@@ -27,7 +27,6 @@ def update_readme(results_df, dataset_name):
     2. Les images (Matrices/ROC)
     3. Les liens de téléchargement (Datasets/Modèles)
     """
-    # 1. Tableau des scores
     md_table = "| Modèle | Précision | F1-Score | Temps (s) |\n"
     md_table += "| :--- | :--- | :--- | :--- |\n"
     
@@ -38,11 +37,9 @@ def update_readme(results_df, dataset_name):
 
     date_now = datetime.datetime.now().strftime("%d/%m/%Y à %H:%M")
     
-    # 2. Liens vers les datasets (Statiques)
     link_nsl = "https://www.kaggle.com/datasets/hassan06/nslkdd"
     link_cic = "https://www.kaggle.com/datasets/chethuhn/network-intrusion-dataset"
     
-    # 3. Contenu complet du README
     readme_content = f"""# 🛡️ IDS-Benchmark: Comparatif ML/DL pour la Cybersécurité
 
 Comparaison des performances des architectures de détection d'intrusions (IDS) sur des datasets historiques et modernes.
@@ -103,29 +100,24 @@ python main.py --mode sim --dataset {dataset_name}
         print(f"\n[ATTENTION] Erreur écriture README : {e}")
 
 if __name__ == "__main__":
-    # Configuration des arguments ligne de commande
     parser = argparse.ArgumentParser(description="AI IDS Benchmark")
     parser.add_argument('--mode', type=str, choices=['train', 'eval', 'sim', 'attack'], default='train', help="Mode: 'train', 'eval', 'sim' ou 'attack'")
     parser.add_argument('--dataset', type=str, default='cic_ids2017', help="Dataset: 'nsl_kdd' ou 'cic_ids2017'")
     args = parser.parse_args()
 
-    # Dossier pour sauvegarder les modèles
     MODEL_DIR = "models"
     if not os.path.exists(MODEL_DIR):
         os.makedirs(MODEL_DIR)
 
     print(f"--- BENCHMARK CYBERSÉCURITÉ : {args.dataset.upper()} | MODE : {args.mode.upper()} ---")
 
-    # Chargement des données
     loader = DataLoader(args.dataset)
     X_train, X_test, X_val, y_train, y_test, y_val, labels_test, labels_val = loader.load_data()
 
-    # Initialisation des modèles
     rf_model = MLDetector()
     dl_model = DLDetector(input_shape=X_train.shape[1]) 
     rb_model = RuleBasedDetector()
     
-    # Init Auto-Encoder (Zero-Day)
     ae_model = AnomalyDetector(input_shape=X_train.shape[1])
 
     if HAS_XGBOOST:
@@ -133,52 +125,41 @@ if __name__ == "__main__":
     else:
         xgb_model = None
 
-    # Chemins de sauvegarde
     rf_path = os.path.join(MODEL_DIR, f"rf_{args.dataset}.joblib")
     dl_path = os.path.join(MODEL_DIR, f"dl_{args.dataset}.keras")
     xgb_path = os.path.join(MODEL_DIR, f"xgb_{args.dataset}.joblib")
     rb_path = os.path.join(MODEL_DIR, f"rb_{args.dataset}.joblib")
-    ae_path = os.path.join(MODEL_DIR, f"ae_{args.dataset}.keras") # Nom base
+    ae_path = os.path.join(MODEL_DIR, f"ae_{args.dataset}.keras") 
 
-    # --- MODE ENTRAINEMENT ---
     if args.mode == 'train':
         print("\n[START] Entraînement des modèles...")
         
-        # 1. Règles Stastistiques (Training léger)
         print(" -> Règle Based (Statistiques)...")
         start = time.time()
         rb_model.fit(X_train, y_train)
         print(f"    (Temps entraînement: {time.time() - start:.2f}s)")
         rb_model.save_model(rb_path)
         
-        # 2. Auto-Encoder (Zero-Day / Non-Supervisé)
         print(" -> Auto-Encoder (Zero-Day Detection)...")
         start = time.time()
-        # --- MODIFICATION: On passe le set de TEST (qui joue le rôle de validation ici) 
-        # pour optimiser le seuil de détection (Threshold) ---
         ae_model.fit(X_train, y_train, X_val=X_test, y_val=y_test)
         print(f"    (Temps entraînement: {time.time() - start:.2f}s)")
         ae_model.save_model(ae_path)
 
-        # Random Forest
         print(" -> Random Forest...")
         start = time.time()
         rf_model.train(X_train, y_train)
         print(f"    (Temps entraînement: {time.time() - start:.2f}s)")
         rf_model.save_model(rf_path)
         
-        # XGBoost
         if xgb_model:
             print(" -> XGBoost...")
-            # On utilise le set de TEST (interne) pour le monitoring
             start = time.time()
             xgb_model.train(X_train, y_train, X_val=X_test, y_val=y_test)
             print(f"    (Temps entraînement: {time.time() - start:.2f}s)")
             xgb_model.save_model(xgb_path)
         
-        # Deep Learning
         print(" -> Deep Learning...")
-        # On utilise le set de TEST (interne) pour le monitoring/early stopping
         start = time.time()
         dl_model.train(X_train, y_train, X_val=X_test, y_val=y_test)
         print(f"    (Temps entraînement: {time.time() - start:.2f}s)")
@@ -186,19 +167,17 @@ if __name__ == "__main__":
         
         print("\nEntraînement terminé. Modèles sauvegardés dans /models")
 
-    # --- MODE EVALUATION ---
     elif args.mode == 'eval':
         print("\n[START] Évaluation complète sur le set de VALIDATION (jamais vu)...")
         evaluator = Evaluator(output_dir='results')
         
-        # Chargement des modèles
         print(" -> Chargement des modèles...")
         rf_model.load_model(rf_path)
         
         if xgb_model:
             xgb_model.load_model(xgb_path)
             
-        rb_model.load_model(rb_path) # Important pour l'hybride
+        rb_model.load_model(rb_path) 
         
         dl_loaded = DLDetector(input_shape=None) 
         dl_loaded.load_model(dl_path)
@@ -206,7 +185,6 @@ if __name__ == "__main__":
         ae_loaded = AnomalyDetector(input_shape=None)
         ae_loaded.load_model(ae_path)
         
-        # Modèle Hybride (Intègre DL + Règles Statistiques)
         hybrid_model = HybridDetector(dl_loaded, rb_model)
         
         models_to_eval = {
@@ -222,7 +200,6 @@ if __name__ == "__main__":
         
         results = []
 
-        # ON UTILISE LE SET DE VALIDATION (X_val) ICI !
         X_target = X_val
         y_target = y_val
 
@@ -231,22 +208,19 @@ if __name__ == "__main__":
             start = time.time()
             
             preds = model.predict(X_target)
-            if hasattr(preds, "flatten"): # Pour DL/Numpy array
+            if hasattr(preds, "flatten"): 
                 preds = preds.flatten()
             
             duration = time.time() - start
             
-            # Métriques de base
             acc = accuracy_score(y_target, preds)
             f1 = f1_score(y_target, preds)
             
             results.append({"Modèle": name, "Précision": acc, "F1-Score": f1, "Temps (s)": duration})
             
-            # Graphiques avancés via evaluation.py
             evaluator.plot_confusion_matrix(y_target, preds, name)
             evaluator.save_report(y_target, preds, name)
             
-            # Courbes ROC (si le modèle supporte predict_proba)
             try:
                 probs = model.predict_proba(X_target)
                 if name == "Deep Learning":
@@ -254,13 +228,12 @@ if __name__ == "__main__":
                 elif hasattr(probs, "shape") and probs.shape[1] == 2:
                     probs = probs[:, 1]
                 elif name == "Auto-Encoder (Zero-Day)":
-                    probs = probs # Déjà en 1D (MSE)
+                    probs = probs 
                 
                 evaluator.plot_roc_curve(y_target, probs, name)
             except Exception as e:
                 print(f"   (Pas de ROC pour {name}: {e})")
 
-        # Affichage final console
         res_df = pd.DataFrame(results)
         print("\n--- RÉSULTATS FINAUX (VALIDATION SET) ---")
         print(res_df.sort_values(by="F1-Score", ascending=False))
@@ -295,12 +268,10 @@ if __name__ == "__main__":
         }
         if xgb_model: simulation_models["XGBoost"] = xgb_model
         
-        # On passe 'labels_val' au simulateur car on utilise X_val
         sim = TrafficSimulator(simulation_models, X_val, y_val, labels_val)
         sim.run(num_packets=100, delay=0.3)
     
     elif args.mode == 'attack':
-        # On ignore les warnings Sklearn car on passe des numpy arrays (attaques) à des modèles entrainés sur DataFrames
         import warnings
         warnings.filterwarnings("ignore", category=UserWarning)
         
@@ -313,7 +284,6 @@ if __name__ == "__main__":
         print(" -> Chargement des modèles...")
         models_to_test = {}
         
-        # 1. Deep Learning (Source de l'attaque)
         if os.path.exists(dl_path):
             dl_loaded = DLDetector(input_shape=None) 
             dl_loaded.load_model(dl_path)
@@ -322,32 +292,26 @@ if __name__ == "__main__":
             print("ERREUR: Modèle DL requis pour générer les attaques.")
             sys.exit(1)
 
-        # 2. Random Forest
         if os.path.exists(rf_path):
              rf_model.load_model(rf_path)
              models_to_test["Random Forest"] = rf_model
 
-        # 3. XGBoost
         if xgb_model and os.path.exists(xgb_path):
              xgb_model.load_model(xgb_path)
              models_to_test["XGBoost"] = xgb_model
 
-        # 4. Hybrid
         if os.path.exists(rb_path):
              rb_model.load_model(rb_path)
              hybrid_model = HybridDetector(dl_loaded, rb_model)
              models_to_test["Hybride"] = hybrid_model
              models_to_test["Traditionnel"] = rb_model
         
-        # 5. AutoEncoder
-        # La sauvegarde de l'AE crée un fichier _model.keras et _meta.joblib
         ae_path_model = ae_path.replace(".keras", "_model.keras")
         if os.path.exists(ae_path_model) or os.path.exists(ae_path):
              ae_loaded = AnomalyDetector(input_shape=None)
              ae_loaded.load_model(ae_path)
              models_to_test["AutoEncoder"] = ae_loaded
 
-        # Sampling
         print(" -> Sélection d'un échantillon d'attaques (max 1000)...")
         import numpy as np
         
@@ -360,10 +324,9 @@ if __name__ == "__main__":
             X_sample = X_val
             y_sample = y_val
 
-        # Lancement du test comparatif
         results = test_robustness(
-            dl_loaded.model, # Source (White-box)
-            models_to_test,  # Cibles (Transferability)
+            dl_loaded.model, 
+            models_to_test, 
             X_sample.values if hasattr(X_sample, 'values') else X_sample, 
             y_sample.values if hasattr(y_sample, 'values') else y_sample, 
             epsilon=0.1

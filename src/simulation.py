@@ -8,7 +8,6 @@ import contextlib
 import re
 from datetime import datetime
 
-# --- COULEURS---
 RED = '\033[91m'
 GREEN = '\033[92m'
 YELLOW = '\033[93m'
@@ -32,20 +31,26 @@ class Colors:
     BOLD = '\033[1m'
     UNDERLINE = '\033[4m'
 
-# --- UTILITAIRES D'AFFICHAGE ---
 def visible_len(s):
-    """Calcule la longueur visible d'une chaîne en ignorant les codes couleurs ANSI."""
+    """
+    Calcule la longueur visible d'une chaîne en ignorant les codes couleurs ANSI.
+    """
     ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
     return len(ansi_escape.sub('', s))
 
 def pad_ansi(s, width):
-    """Ajoute des espaces à droite pour atteindre la largeur visible demandée."""
+    """
+    Ajoute des espaces à droite pour atteindre la largeur visible demandée.
+    """
     v_len = visible_len(s)
     padding = max(0, width - v_len)
     return s + " " * padding
 
 @contextlib.contextmanager
 def suppress_output():
+    """
+    Contexte pour supprimer la sortie standard (stdout) et d'erreur (stderr).
+    """
     with open(os.devnull, "w") as devnull:
         old_stdout = sys.stdout
         old_stderr = sys.stderr
@@ -58,16 +63,26 @@ def suppress_output():
             sys.stderr = old_stderr
 
 class TrafficSimulator:
+    """
+    Simulateur de trafic réseau temps réel pour demonstration.
+    """
     def __init__(self, models_dict, X_val, y_val, labels_val):
-        self.models = models_dict # Dict de modèles {"RandomForest": model, ...}
+        """
+        Initialise le simulateur.
+
+        Args:
+            models_dict (dict): Dictionnaire des modèles à simuler.
+            X_val (pd.DataFrame): Données de validation.
+            y_val (pd.Series): Labels binaires de validation.
+            labels_val (pd.Series): Noms des attaques de validation.
+        """
+        self.models = models_dict 
         self.X_val = X_val
         self.y_val = y_val.reset_index(drop=True)
         self.labels_val = labels_val.reset_index(drop=True)
         
-        # ACTIVE DEFENSE: Cache des attaquants pour les ré-utiliser (Simulation d'attaque persistante)
         self.known_attackers = [] 
         
-        # Dictionnaire pour traduire les features techniques en langage humain et pédagogique
         self.feature_map = {
             'Flow Duration': 'Durée de Connexion Anormale (Possible Scan Lent)',
             'Total Fwd Packets': 'Volume d\'Upload Suspect (Exfiltration ?)',
@@ -83,22 +98,26 @@ class TrafficSimulator:
         }
 
     def _generate_fake_metadata(self, is_attack):
-        """Génère des fausses métadonnées (IP, Port) pour le réalisme."""
+        """
+        Génère des fausses métadonnées (IP, Port) pour le réalisme.
+        """
         port = np.random.randint(1024, 65535)
         
         if is_attack:
-            # ACTIVE DEFENSE: 50% de chance de réutiliser une IP d'attaquant connu
             if self.known_attackers and np.random.rand() > 0.5:
                 ip = np.random.choice(self.known_attackers)
             else:
                 ip = f"192.168.1.{np.random.randint(100, 200)}"
-                self.known_attackers.append(ip) # On le mémorise
+                self.known_attackers.append(ip) 
         else:
             ip = f"10.0.0.{np.random.randint(2, 254)}"
             
         return ip, port
 
     def _get_model_proba(self, model, row):
+        """
+        Récupère la probabilité prédite par un modèle pour une ligne donnée.
+        """
         if hasattr(model, 'predict_proba'):
             return model.predict_proba(row)
         elif hasattr(model, 'dl_model'): 
@@ -107,11 +126,13 @@ class TrafficSimulator:
             return None
 
     def _get_true_explanation(self, model, row, model_name):
-        """Moteur XAI : Analyse causale détaillée."""
+        """
+        Génère une explication textuelle (XAI) pour la décision du modèle.
+        Utilise des techniques d'analyse de perturbation ou spécifiques au modèle.
+        """
         if "AutoEncoder" in model_name:
-             # Cas Spécial Zero-Day : On ne regarde pas la proba mais la MSE
              try:
-                 mse = model.predict_proba(row)[0] # Retourne la MSE
+                 mse = model.predict_proba(row)[0] 
                  thresh = getattr(model, "threshold", 0.05)
                  if mse > thresh:
                      return f"Comportement Inconnu (Zero-Day)"
@@ -121,43 +142,36 @@ class TrafficSimulator:
                  print(f"DEBUG ERROR XAI: {e}")
                  return "Erreur XAI AE"
 
-        # Cas Classique (RF, DL, Hybride)
         with suppress_output():
             base_pred = self._get_model_proba(model, row)
         
         if base_pred is None: return ""
 
-        # Gestion des différentes formes de sortie (Proba 1D, 2D, Scalar)
         if isinstance(base_pred, list): base_prob = base_pred[0]
         elif hasattr(base_pred, "shape") and base_pred.shape == (1, 2): base_prob = base_pred[0][1]
         elif hasattr(base_pred, "shape") and base_pred.shape == (1, 1): base_prob = base_pred[0][0]
         elif hasattr(base_pred, "item"): base_prob = base_pred.item()
         else: base_prob = float(base_pred)
 
-        if base_prob < 0.5: return "" # Pas d'explication si considéré Safe
+        if base_prob < 0.5: return "" 
 
-        # 1. Analyse Hybride (Logique Règle)
         if "Hybride" in model_name:
             is_cic = 'Destination Port' in row.columns
-            # Si dans la zone d'incertitude (entre 25% et 75%), c'est probablement une règle qui a tranché
             if 0.20 <= base_prob <= 0.80:
                 if is_cic:
                     if 'Flow Duration' in row and row['Flow Duration'].item() > 0.5: return "Règle: Durée Trop Longue"
                     if 'Total Fwd Packets' in row and row['Total Fwd Packets'].item() > 0.5: return "Règle: Volume Excessif"
                 return "Règle: Seuil Statistique Dépassé"
 
-        # 2. Analyse Perturbation (Deep Learning & RF)
-        # On cherche la feature qui fait le plus baisser la probabilité d'attaque si on la met à 0
-        significant_features = row.columns[row.abs().gt(0.1).any()].tolist() # Optimisation: on ne teste que les features > 0.1
+        significant_features = row.columns[row.abs().gt(0.1).any()].tolist() 
         impacts = {}
         
-        # Limite pour performance
         if len(significant_features) > 10: 
             significant_features = significant_features[:10]
 
         for feature in significant_features:
             perturbed_row = row.copy()
-            perturbed_row[feature] = 0.0 # On neutralise la feature (valeur moyenne car centré réduit)
+            perturbed_row[feature] = 0.0 
             
             with suppress_output():
                 new_pred = self._get_model_proba(model, perturbed_row)
@@ -170,7 +184,7 @@ class TrafficSimulator:
             elif hasattr(new_pred, "item"): new_prob = new_pred.item()
             else: new_prob = float(new_pred)
             
-            impacts[feature] = base_prob - new_prob # Chute de confiance
+            impacts[feature] = base_prob - new_prob 
 
         if not impacts: return "Motif Global"
             
@@ -179,14 +193,19 @@ class TrafficSimulator:
         
         if confidence_drop < 0.01: return "Pattern Complexe"
         
-        # --- ENRICHISSEMENT DE L'EXPLICATION ---
         human_name = self.feature_map.get(best_feature, best_feature[:15])
         return f"{human_name}"
 
     def run(self, num_packets=50, delay=0.5):
+        """
+        Lance la simulation de trafic.
+
+        Args:
+            num_packets (int): Nombre de paquets à simuler.
+            delay (float): Délai (en secondes) entre chaque paquet.
+        """
         print(f"\n{Colors.HEADER}--- DÉMARRAGE DU TRAFFIC SIMULATOR (DASHBOARD SOC) ---{Colors.ENDC}")
         print(f"{Colors.BOLD}Simulation de {num_packets} paquets en temps réel...{Colors.ENDC}\n")
-        # Header élargi pour XAI
         print(f"{'TIMESTAMP':<10} | {'SOURCE IP':<15} | {'TYPE':<12} | {'DÉTECTION (MODELE)':<40} | {'ACTION':<10} | {'RAISON (XAI)':<20}")
         print("-" * 125)
 
@@ -199,7 +218,7 @@ class TrafficSimulator:
         indices = np.random.choice(len(self.X_val), min(num_packets, len(self.X_val)), replace=False)
 
         for i in indices:
-            row = self.X_val.iloc[[i]] # DataFrame
+            row = self.X_val.iloc[[i]] 
             actual_label = self.y_val[i]
             attack_name = self.labels_val[i] if actual_label == 1 else "Normal"
             is_attack = (actual_label == 1)
@@ -207,27 +226,24 @@ class TrafficSimulator:
             src_ip, src_port = self._generate_fake_metadata(is_attack)
             timestamp = datetime.now().strftime("%H:%M:%S")
 
-            # --- ACTIVE DEFENSE LOGIC ---
             firewall_model = self.models.get("Traditionnel (Règles)") or self.models.get("Hybride")
             is_firewalled = False
             
             if firewall_model:
-                if hasattr(firewall_model, "rb_model") and firewall_model.rb_model: # Cas Hybride
+                if hasattr(firewall_model, "rb_model") and firewall_model.rb_model: 
                      if firewall_model.rb_model.is_blocked(src_ip):
                          is_firewalled = True
-                elif hasattr(firewall_model, "is_blocked"): # Cas Traditionnel
+                elif hasattr(firewall_model, "is_blocked"): 
                      if firewall_model.is_blocked(src_ip):
                          is_firewalled = True
 
             
-            # Affichage pour chaque modèle
             results_display = []
             final_action = f"{Colors.OKGREEN}ALLOW{Colors.ENDC}"
-            explanation = "" # Explication globale
+            explanation = "" 
 
             for model_name, model in self.models.items():
                 if is_firewalled:
-                    # BLOCKED BY FIREWALL
                     pred = 1 
                     if model_name in ["Traditionnel (Règles)", "Hybride"]:
                         stats[model_name]["Firewall"] += 1
@@ -235,17 +251,12 @@ class TrafficSimulator:
                         final_action = f"{Colors.FAIL}BLOCK [FW]{Colors.ENDC}"
                         explanation = f"{Colors.WARNING}IP Blacklistée{Colors.ENDC}"
                     else:
-                        # Les autres modèles n'ont pas forcément accès au FW
-                        # Pour l'affichage, on montre qu'ils sont 'out' ou on simule leur décision
-                        # On va dire qu'ils sont bypassés par le FW
                         stats[model_name]["Firewall"] += 1
                         stats[model_name]["Blocked"] += 1
                         
                 else:
-                    # BLOCKED BY AI
                     try:
                         pred = model.predict(row)
-                        # Conversion robuste scalaire
                         if hasattr(pred, "values"): pred = pred.values
                         if hasattr(pred, "flatten"): pred = pred.flatten()[0]
                         elif isinstance(pred, list): pred = pred[0]
@@ -257,14 +268,11 @@ class TrafficSimulator:
                         stats[model_name]["Blocked"] += 1
                         final_action = action_str
                         
-                        # On calcule l'explication XAI pour ce modèle
-                        # On prend la première explication pertinente trouvée pour l'affichage global
                         if not explanation:
                             reason = self._get_true_explanation(model, row, model_name)
                             if reason:
                                 explanation = reason
 
-                        # ACTIVE DEFENSE UPDATE
                         if firewall_model and is_attack:
                             if hasattr(firewall_model, "rb_model") and firewall_model.rb_model:
                                 firewall_model.rb_model.update_blocklist(src_ip)
@@ -274,7 +282,6 @@ class TrafficSimulator:
                     else:
                         stats[model_name]["Allowed"] += 1
 
-                # Coloration du nom du modèle
                 is_correct = (int(pred) == int(actual_label))
                 if is_correct:
                     res_str = f"{Colors.OKGREEN}{model_name}{Colors.ENDC}"
@@ -283,10 +290,8 @@ class TrafficSimulator:
                 
                 results_display.append(res_str)
 
-            # Formatage de l'affichage ligne
             type_color = Colors.FAIL if is_attack else Colors.OKGREEN
             
-            # Formattage de l'explication
             if explanation:
                 expl_str = f"{Colors.YELLOW}{explanation}{Colors.ENDC}"
             else:
